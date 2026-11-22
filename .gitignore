@@ -1,0 +1,40 @@
+# Local sensitive notes / credentials
+*.rtf
+.env
+.env.local
+.env.*.local
+*.tar.gz
+*.log
+
+# Python / Backend
+backend/.venv/
+backend/__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# Frontend / Node
+node_modules/
+admin-web/dist/
+admin-web/dist-ssr/
+admin-web/*.local
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# WeChat Mini Program
+miniprogram/miniprogram_npm/
+miniprogram/project.private.config.json
+
+# OS & Editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo

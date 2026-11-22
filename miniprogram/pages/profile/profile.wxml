@@ -1,0 +1,45 @@
+<view class="container">
+  <view class="card profile-card">
+    <view class="avatar">
+      <text>{{avatarInitial}}</text>
+    </view>
+    <view class="profile-info">
+      <view class="profile-name">{{userInfo ? userInfo.nickname : '未登录用户'}}</view>
+      <view class="muted-text">
+        {{userInfo ? ('OpenID: ' + userInfo.openid) : '点击下方按钮完成微信登录'}}
+      </view>
+    </view>
+    <status-badge
+      type="{{userInfo ? 'success' : 'warning'}}"
+      text="{{userInfo ? '已登录' : '未登录'}}"
+    />
+  </view>
+
+  <view class="card">
+    <view class="card-title">账号操作</view>
+    <button
+      wx:if="{{!userInfo}}"
+      class="primary-btn"
+      loading="{{loggingIn}}"
+      bindtap="handleWxLogin"
+    >
+      微信一键登录
+    </button>
+    <view wx:else class="btn-group">
+      <button class="ghost-btn" bindtap="handleRefreshProfile">刷新云端资料</button>
+      <button class="logout-btn" bindtap="handleLogout">退出登录</button>
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="card-title">运行环境</view>
+    <view class="env-row">
+      <text class="muted-text">当前环境</text>
+      <text>{{envName}}</text>
+    </view>
+    <view class="env-row">
+      <text class="muted-text">接口地址</text>
+      <text class="api-url">{{apiBaseUrl}}</text>
+    </view>
+  </view>
+</view>

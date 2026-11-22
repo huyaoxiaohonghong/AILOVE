@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "AILOVE 首页",
+  "enablePullDownRefresh": true,
+  "usingComponents": {
+    "status-badge": "/components/status-badge/status-badge"
+  }
+}

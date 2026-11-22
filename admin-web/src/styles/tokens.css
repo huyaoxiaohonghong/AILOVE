@@ -1,0 +1,89 @@
+/* ==========================================================================
+   AILOVE Design System Tokens — UI UX Pro Max (Warm Editorial × Precision)
+   Single Source of Truth: design-system/MASTER.md
+   ========================================================================== */
+
+:root {
+  /* Surfaces (Warm Silk Alabaster Daylight) */
+  --ailove-canvas: #f7f4f1;
+  --ailove-subtle: #fbf9f7;
+  --ailove-surface: #ffffff;
+  --ailove-surface-hover: #faf6f3;
+  --ailove-border: rgba(26, 22, 29, 0.08);
+  --ailove-border-strong: rgba(26, 22, 29, 0.14);
+
+  /* Ink Hierarchy (Warm Obsidian) */
+  --ailove-ink-primary: #1a161d;
+  --ailove-ink-secondary: #524b57;
+  --ailove-ink-muted: #847c8a;
+
+  /* Brand Palette (Rose-Coral + Warm Amber) */
+  --ailove-brand-50: #fff1f4;
+  --ailove-brand-100: #ffe0e7;
+  --ailove-brand-200: #fec3d2;
+  --ailove-brand-500: #e14b68;
+  --ailove-brand-600: #c83553;
+  --ailove-brand-700: #a52540;
+  --ailove-accent-amber: #d97706;
+  --ailove-accent-amber-bg: #fffbeb;
+
+  /* Semantic Status */
+  --ailove-success: #0d8a67;
+  --ailove-success-bg: #ecfdf5;
+  --ailove-success-border: #a7f3d0;
+  --ailove-warning: #b45309;
+  --ailove-warning-bg: #fffbeb;
+  --ailove-warning-border: #fde68a;
+  --ailove-danger: #be123c;
+  --ailove-danger-bg: #fff1f2;
+  --ailove-danger-border: #fecdd3;
+  --ailove-info: #475569;
+  --ailove-info-bg: #f1f5f9;
+
+  /* Typography */
+  --ailove-font-display:
+    'SF Pro Display', 'PingFang SC', 'Hiragino Sans GB', 'Inter', -apple-system, BlinkMacSystemFont,
+    sans-serif;
+  --ailove-font-sans:
+    'SF Pro Text', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', -apple-system, sans-serif;
+  --ailove-font-mono: 'SF Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Geometry & Elevation */
+  --ailove-radius-sm: 8px;
+  --ailove-radius-md: 12px;
+  --ailove-radius-lg: 16px;
+  --ailove-radius-xl: 22px;
+  --ailove-shadow-card:
+    0 1px 2px rgba(26, 22, 29, 0.04), 0 8px 24px -14px rgba(26, 22, 29, 0.08);
+  --ailove-shadow-elevated:
+    0 18px 46px -12px rgba(26, 22, 29, 0.14), 0 2px 8px rgba(26, 22, 29, 0.04);
+  --ailove-shadow-brand: 0 10px 22px -8px rgba(200, 53, 83, 0.42);
+
+  /* Motion */
+  --ailove-ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Element Plus Semantic Overrides */
+  --el-color-primary: #c83553;
+  --el-color-primary-light-3: #e1647e;
+  --el-color-primary-light-5: #eb90a3;
+  --el-color-primary-light-7: #f4bcc8;
+  --el-color-primary-light-8: #f9d4dc;
+  --el-color-primary-light-9: #fff1f4;
+  --el-color-primary-dark-2: #a52540;
+  --el-color-success: #0d8a67;
+  --el-color-warning: #d97706;
+  --el-color-danger: #be123c;
+  --el-color-info: #64748b;
+  --el-text-color-primary: #1a161d;
+  --el-text-color-regular: #524b57;
+  --el-text-color-secondary: #847c8a;
+  --el-border-color: rgba(26, 22, 29, 0.11);
+  --el-border-color-light: rgba(26, 22, 29, 0.07);
+  --el-border-color-lighter: rgba(26, 22, 29, 0.05);
+  --el-fill-color-light: #faf6f3;
+  --el-fill-color-lighter: #fbf9f7;
+  --el-bg-color-page: #f7f4f1;
+  --el-border-radius-base: 9px;
+  --el-border-radius-small: 7px;
+  --el-font-family: var(--ailove-font-sans);
+}

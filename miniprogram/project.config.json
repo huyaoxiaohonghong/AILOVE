@@ -1,0 +1,30 @@
+{
+  "description": "AILOVE 微信小程序工程配置（微信原生开发）",
+  "packOptions": {
+    "ignore": [
+      { "value": ".eslintrc.js", "type": "file" },
+      { "value": "README.md", "type": "file" }
+    ]
+  },
+  "setting": {
+    "urlCheck": false,
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "newFeature": true,
+    "autoAudits": false,
+    "checkInvalidKey": true,
+    "checkSiteMap": true,
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    }
+  },
+  "compileType": "miniprogram",
+  "libVersion": "3.7.0",
+  "appid": "touristappid",
+  "projectname": "AILOVE-MiniProgram",
+  "condition": {}
+}

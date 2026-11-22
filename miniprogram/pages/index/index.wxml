@@ -1,0 +1,53 @@
+<view class="container">
+  <view class="hero-card">
+    <view class="hero-tag">微信原生小程序</view>
+    <view class="hero-title">欢迎使用 AILOVE</view>
+    <view class="hero-desc">
+      已集成 FastAPI + MySQL + Redis + LangChain 后端链路与统一鉴权封装
+    </view>
+    <view class="hero-actions">
+      <button class="hero-btn" bindtap="goChat">体验 AI 对话</button>
+      <button class="hero-btn-outline" bindtap="checkBackendHealth">检测后端连通</button>
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="row-between">
+      <view class="card-title" style="margin-bottom: 0;">后端服务状态</view>
+      <status-badge type="{{backendBadgeType}}" text="{{backendStatusText}}" />
+    </view>
+
+    <view class="meta-list">
+      <view class="meta-item">
+        <text class="meta-label">接口地址</text>
+        <text class="meta-value">{{apiBaseUrl}}</text>
+      </view>
+      <view class="meta-item">
+        <text class="meta-label">MySQL</text>
+        <text class="meta-value">{{mysqlStatus}}</text>
+      </view>
+      <view class="meta-item">
+        <text class="meta-label">Redis</text>
+        <text class="meta-value">{{redisStatus}}</text>
+      </view>
+      <view class="meta-item">
+        <text class="meta-label">LangChain 模型</text>
+        <text class="meta-value">{{llmModel}}</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="card-title">快捷入口</view>
+    <view class="quick-grid">
+      <view class="quick-item" bindtap="goChat">
+        <view class="quick-title">智能对话</view>
+        <view class="muted-text">对接 LangChain 多轮会话</view>
+      </view>
+      <view class="quick-item" bindtap="goProfile">
+        <view class="quick-title">微信登录</view>
+        <view class="muted-text">wx.login 换取 JWT</view>
+      </view>
+    </view>
+  </view>
+</view>

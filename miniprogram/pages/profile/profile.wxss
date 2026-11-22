@@ -1,0 +1,63 @@
+.profile-card {
+  display: flex;
+  align-items: center;
+  gap: 24rpx;
+}
+
+.avatar {
+  width: 96rpx;
+  height: 96rpx;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  color: #ffffff;
+  font-size: 38rpx;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.profile-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.profile-name {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #111827;
+  margin-bottom: 6rpx;
+}
+
+.btn-group {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.logout-btn {
+  background: #fef2f2;
+  color: #dc2626;
+  border-radius: 16rpx;
+  font-size: 28rpx;
+  border: none;
+}
+
+.logout-btn::after {
+  border: none;
+}
+
+.env-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14rpx 0;
+  border-bottom: 2rpx solid #f3f4f6;
+}
+
+.api-url {
+  max-width: 68%;
+  text-align: right;
+  word-break: break-all;
+}
