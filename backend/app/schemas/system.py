@@ -50,6 +50,10 @@ class SysConfigResetRequest(BaseModel):
     )
 
 
+class SmtpTestRequest(BaseModel):
+    to_email: str = Field(..., min_length=5, max_length=254, description="测试收件邮箱地址")
+
+
 class AuditLogCleanupRequest(BaseModel):
     retention_days: int | None = Field(
         default=None,

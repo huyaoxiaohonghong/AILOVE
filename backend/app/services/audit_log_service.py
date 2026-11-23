@@ -45,7 +45,13 @@ def sanitize_payload(data: Any, *, _depth: int = 0) -> Any:
                 cleaned["..."] = "truncated"
                 break
             key_str = str(k)
-            if key_str.lower() in _SENSITIVE_KEYS:
+            low = key_str.lower()
+            if (
+                low in _SENSITIVE_KEYS
+                or "password" in low
+                or "secret" in low
+                or "api_key" in low
+            ):
                 cleaned[key_str] = "***REDACTED***" if v else ""
             else:
                 cleaned[key_str] = sanitize_payload(v, _depth=_depth + 1)

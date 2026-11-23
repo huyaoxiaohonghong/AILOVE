@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -7,11 +9,30 @@ class EmailCheckRequest(BaseModel):
     email: str = Field(..., min_length=3, max_length=254, description="待检测的邮箱地址")
 
 
+class SendEmailCodeRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=254, description="目标邮箱地址")
+    scene: Literal["register", "reset_password"] = Field(
+        ..., description="验证码场景：register / reset_password"
+    )
+    captcha_token: str = Field(default="", max_length=128, description="滑动验证通过后的一次性票据")
+
+
 class EmailRegisterRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=254, description="正规公共邮箱地址")
     password: str = Field(..., min_length=6, max_length=128, description="登录密码（须含字母与数字）")
     nickname: str | None = Field(default=None, max_length=64, description="用户昵称（可选）")
     captcha_token: str = Field(default="", max_length=128, description="滑动验证通过后的一次性票据")
+    email_code: str = Field(
+        default="", max_length=12, description="6位邮箱一次性验证码（开启邮箱校验时必填）"
+    )
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=254, description="已注册邮箱地址")
+    email_code: str = Field(..., min_length=6, max_length=12, description="6位邮箱一次性验证码")
+    new_password: str = Field(
+        ..., min_length=6, max_length=128, description="新登录密码（须含字母与数字）"
+    )
 
 
 class AccountLoginRequest(BaseModel):

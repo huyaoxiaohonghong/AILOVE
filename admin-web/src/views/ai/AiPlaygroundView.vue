@@ -34,7 +34,7 @@ const WELCOME_MSG: ChatBubble = {
   id: 1,
   role: 'assistant',
   content:
-    '你好！这里是 **AILOVE LangChain 对话工作台**，支持持久化多会话切换、OpenAI / Anthropic 双协议引擎与完整 **Markdown** 代码高亮渲染。\n\n- 默认接入 `deepseek-flash` / `deepseek-v4-pro`\n- 自动注入实时系统时钟上下文\n- 支持思考链展示、停止生成、复制代码与重新生成',
+    '你好！这里是 **AILOVE 恋爱情感 AI 对话工作台**，可在上方快速切换「高情商恋爱军师 / 心动约会策划师 / 亲密关系顾问 / 吵架降温调解员 / 深夜情绪树洞」等情感智能体，也支持自由直连对话。\n\n- 默认接入 `deepseek-flash` / `deepseek-v4-pro`\n- 自动注入实时系统时钟上下文与历史多会话记忆\n- 支持思考链展示、Markdown 排版、复制与重新生成',
 }
 
 const route = useRoute()
@@ -619,11 +619,11 @@ onBeforeUnmount(() => {
         <button
           v-for="cat in [
             { k: 'all', l: '全部' },
-            { k: 'general', l: '通用' },
-            { k: 'writing', l: '文案' },
-            { k: 'coding', l: '研发' },
-            { k: 'translate', l: '翻译' },
-            { k: 'analysis', l: '分析' },
+            { k: 'chat_coach', l: '话术' },
+            { k: 'dating', l: '约会' },
+            { k: 'relationship', l: '关系' },
+            { k: 'conflict', l: '修复' },
+            { k: 'healing', l: '疗愈' },
           ]"
           :key="cat.k"
           type="button"

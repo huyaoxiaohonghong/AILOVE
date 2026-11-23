@@ -33,10 +33,16 @@ async function switchDays(days: number) {
 
 const SVG_W = 640
 const SVG_H = 210
-const PAD_L = 44
+const PAD_L = 50
 const PAD_R = 16
 const PAD_T = 18
 const PAD_B = 30
+
+function formatAxisTick(val: number): string {
+  if (val >= 10000) return `${Math.round(val / 1000)}k`
+  if (val >= 1000) return `${(val / 1000).toFixed(1)}k`
+  return String(val)
+}
 
 const chartGeometry = computed(() => {
   const rows = analytics.value?.daily_trend ?? []
@@ -69,7 +75,7 @@ const chartGeometry = computed(() => {
 
   const yTicks = [0, 0.25, 0.5, 0.75, 1].map((ratio) => ({
     y: Number((PAD_T + plotH * (1 - ratio)).toFixed(1)),
-    label: Math.round(maxVal * ratio),
+    label: formatAxisTick(Math.round(maxVal * ratio)),
   }))
 
   return { points, polyline, areaPath, yTicks, baselineY: PAD_T + plotH }

@@ -16,6 +16,8 @@ _MAX_SNIFF_BYTES = 16384
 
 # (method, exact_or_prefix, is_prefix) -> (module, action_label)
 _ACTION_RULES: tuple[tuple[str, str, bool, str, str], ...] = (
+    ("POST", "/api/v1/auth/email-code/send", False, "auth", "发送邮箱验证码"),
+    ("POST", "/api/v1/auth/reset-password", False, "auth", "邮箱验证码重置密码"),
     ("POST", "/api/v1/auth/register", False, "auth", "邮箱自助注册"),
     ("POST", "/api/v1/auth/login", False, "auth", "账号登录"),
     ("POST", "/api/v1/auth/logout", False, "auth", "退出当前设备"),
@@ -39,6 +41,7 @@ _ACTION_RULES: tuple[tuple[str, str, bool, str, str], ...] = (
     ("DELETE", "/api/v1/ai/sessions/", True, "ai", "清空 AI 会话记忆"),
     ("PUT", "/api/v1/admin/system/configs", False, "system", "更新系统动态配置"),
     ("POST", "/api/v1/admin/system/configs/reset", False, "system", "重置系统默认配置"),
+    ("POST", "/api/v1/admin/system/smtp/test", False, "system", "测试 SMTP 邮件连通性"),
     ("POST", "/api/v1/admin/rbac/roles", False, "rbac", "创建自定义角色"),
     ("PUT", "/api/v1/admin/rbac/roles/", True, "rbac", "修改角色与权限配置"),
     ("DELETE", "/api/v1/admin/rbac/roles/", True, "rbac", "删除自定义角色"),

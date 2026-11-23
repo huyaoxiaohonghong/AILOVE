@@ -48,6 +48,8 @@ export interface PublicSystemConfig {
   maintenance_mode: boolean
   registration_enabled: boolean
   slider_captcha_enabled: boolean
+  email_verify_required: boolean
+  email_service_enabled: boolean
   password_min_length: number
   configs: Record<string, unknown>
 }
@@ -61,6 +63,9 @@ export interface SysConfigItem {
   default_value: string | number | boolean
   description: string
   is_public: boolean
+  is_secret?: boolean
+  has_secret?: boolean
+  masked_value?: string
   min_val: number | null
   max_val: number | null
   updated_at: string | null
@@ -113,5 +118,20 @@ export function resetSystemConfigs(groupName?: string) {
     url: '/admin/system/configs/reset',
     method: 'post',
     data: { group_name: groupName || null },
+  })
+}
+
+export function sendSmtpTestEmail(to_email: string) {
+  return request<{
+    sent: boolean
+    to_email: string
+    host: string
+    port: number
+    security: string
+    latency_ms: number
+  }>({
+    url: '/admin/system/smtp/test',
+    method: 'post',
+    data: { to_email },
   })
 }

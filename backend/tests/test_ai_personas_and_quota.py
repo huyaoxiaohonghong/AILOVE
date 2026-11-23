@@ -17,13 +17,35 @@ async def test_ai_personas_crud_builtin_protection_and_chat_usage():
         assert list_res.status_code == 200
         items = list_res.json()["data"]["items"]
         codes = {item["code"] for item in items}
-        assert {
+        expected_love_codes = {
+            "love_chat_coach",
+            "dating_planner",
+            "relationship_counselor",
+            "conflict_mediator",
+            "warm_healer",
+        }
+        legacy_non_love_codes = {
             "assistant_general",
             "copywriter_pro",
             "architect_coder",
             "translator_bilingual",
             "data_analyst",
-        }.issubset(codes)
+        }
+        assert expected_love_codes.issubset(codes)
+        assert codes.isdisjoint(legacy_non_love_codes)
+
+        bad_cat = await client.post(
+            "/api/v1/admin/ai/personas",
+            json={
+                "code": "non_love_coder",
+                "name": "非情感编码助手",
+                "avatar_emoji": "💻",
+                "category": "coding",
+                "system_prompt": "只写代码的助手",
+            },
+            headers=admin_headers,
+        )
+        assert bad_cat.status_code == 422
 
         builtin = next(item for item in items if item["is_system"])
         del_builtin = await client.delete(
@@ -36,14 +58,14 @@ async def test_ai_personas_crud_builtin_protection_and_chat_usage():
         create_res = await client.post(
             "/api/v1/admin/ai/personas",
             json={
-                "code": "custom_qa_bot",
-                "name": "测试问答助手",
-                "avatar_emoji": "🎯",
-                "category": "general",
-                "description": "自动化测试专用智能体",
-                "system_prompt": "你是一位严谨的 QA 专家，请分点输出测试用例。",
-                "starter_prompts": ["测试问题A", "测试问题B"],
-                "temperature": 0.4,
+                "code": "custom_love_tester",
+                "name": "恋爱测试顾问",
+                "avatar_emoji": "💌",
+                "category": "chat_coach",
+                "description": "自动化测试专用情感智能体",
+                "system_prompt": "你是一位温柔理性的恋爱沟通顾问，请分点输出聊天建议。",
+                "starter_prompts": ["测试情感话术A", "测试约会建议B"],
+                "temperature": 0.6,
                 "is_enabled": True,
                 "sort_order": 99,
             },
@@ -53,11 +75,11 @@ async def test_ai_personas_crud_builtin_protection_and_chat_usage():
         created = create_res.json()["data"]
         pid = created["id"]
         assert created["is_system"] is False
-        assert created["starter_prompts"] == ["测试问题A", "测试问题B"]
+        assert created["starter_prompts"] == ["测试情感话术A", "测试约会建议B"]
 
         pub_res = await client.get("/api/v1/ai/personas", headers=admin_headers)
         assert pub_res.status_code == 200
-        assert any(p["code"] == "custom_qa_bot" for p in pub_res.json()["data"]["items"])
+        assert any(p["code"] == "custom_love_tester" for p in pub_res.json()["data"]["items"])
 
         disable_res = await client.put(
             f"/api/v1/admin/ai/personas/{pid}",
@@ -76,20 +98,20 @@ async def test_ai_personas_crud_builtin_protection_and_chat_usage():
 
         enable_res = await client.put(
             f"/api/v1/admin/ai/personas/{pid}",
-            json={"is_enabled": True, "name": "测试问答助手V2"},
+            json={"is_enabled": True, "name": "恋爱测试顾问V2"},
             headers=admin_headers,
         )
         assert enable_res.status_code == 200
 
         chat_ok = await client.post(
             "/api/v1/ai/chat",
-            json={"message": "帮我列一条冒烟测试用例", "persona_id": pid},
+            json={"message": "帮我润色一句晚安表白的话", "persona_id": pid},
             headers=admin_headers,
         )
         assert chat_ok.status_code == 200
         chat_data = chat_ok.json()["data"]
         assert chat_data["persona_id"] == pid
-        assert chat_data["persona_name"] == "测试问答助手V2"
+        assert chat_data["persona_name"] == "恋爱测试顾问V2"
 
         after_list = await client.get("/api/v1/admin/ai/personas", headers=admin_headers)
         refreshed = next(item for item in after_list.json()["data"]["items"] if item["id"] == pid)

@@ -27,23 +27,23 @@ const authStore = useAuthStore()
 const canManage = computed(() => authStore.hasPermission('ai:config:manage'))
 
 const CATEGORY_OPTIONS: Array<{ value: PersonaCategory | 'all'; label: string }> = [
-  { value: 'all', label: '全部智能体' },
-  { value: 'general', label: '通用助手' },
-  { value: 'writing', label: '文案创作' },
-  { value: 'coding', label: '编程研发' },
-  { value: 'translate', label: '双语翻译' },
-  { value: 'analysis', label: '数据分析' },
+  { value: 'all', label: '全部情感智能体' },
+  { value: 'chat_coach', label: '高情商话术' },
+  { value: 'dating', label: '脱单约会' },
+  { value: 'relationship', label: '关系维护' },
+  { value: 'conflict', label: '吵架修复' },
+  { value: 'healing', label: '情绪疗愈' },
 ]
 
 const CATEGORY_MAP: Record<PersonaCategory, string> = {
-  general: '通用助手',
-  writing: '文案创作',
-  coding: '编程研发',
-  translate: '双语翻译',
-  analysis: '数据分析',
+  chat_coach: '高情商话术',
+  dating: '脱单约会',
+  relationship: '关系维护',
+  conflict: '吵架修复',
+  healing: '情绪疗愈',
 }
 
-const EMOJI_PRESETS = ['🤖', '✍️', '💻', '🌐', '📊', '🎯', '💡', '🛡️', '🎨', '📚']
+const EMOJI_PRESETS = ['💘', '🌹', '💞', '🕊️', '🌙', '💌', '✨', '🫂', '🌸', '🎀']
 
 const loading = ref(false)
 const personas = ref<AIPersonaItem[]>([])
@@ -53,13 +53,12 @@ const keyword = ref('')
 const dialogVisible = ref(false)
 const submitting = ref(false)
 const editingId = ref<number | null>(null)
-const editingIsSystem = ref(false)
 
 const form = reactive({
   code: '',
   name: '',
-  avatar_emoji: '🤖',
-  category: 'general' as PersonaCategory,
+  avatar_emoji: '💘',
+  category: 'chat_coach' as PersonaCategory,
   description: '',
   system_prompt: '',
   starter_prompts: [''] as string[],
@@ -95,11 +94,10 @@ async function loadPersonas() {
 
 function openCreateDialog() {
   editingId.value = null
-  editingIsSystem.value = false
   form.code = ''
   form.name = ''
-  form.avatar_emoji = '🤖'
-  form.category = 'general'
+  form.avatar_emoji = '💘'
+  form.category = 'chat_coach'
   form.description = ''
   form.system_prompt = ''
   form.starter_prompts = ['']
@@ -112,10 +110,9 @@ function openCreateDialog() {
 
 function openEditDialog(item: AIPersonaItem) {
   editingId.value = item.id
-  editingIsSystem.value = item.is_system
   form.code = item.code
   form.name = item.name
-  form.avatar_emoji = item.avatar_emoji || '🤖'
+  form.avatar_emoji = item.avatar_emoji || '💘'
   form.category = item.category
   form.description = item.description
   form.system_prompt = item.system_prompt
@@ -157,10 +154,10 @@ async function handleSave() {
   }
 
   const starters = form.starter_prompts.map((s) => s.trim()).filter(Boolean)
-  const payload: AIPersonaPayload = {
+    const payload: AIPersonaPayload = {
     ...(editingId.value === null ? { code } : {}),
     name,
-    avatar_emoji: form.avatar_emoji.trim() || '🤖',
+    avatar_emoji: form.avatar_emoji.trim() || '💘',
     category: form.category,
     description: form.description.trim(),
     system_prompt: prompt,
@@ -230,9 +227,9 @@ onMounted(() => {
   <div v-loading="loading">
     <div class="page-header">
       <div>
-        <h2 class="page-title">智能体工坊</h2>
+        <h2 class="page-title">情感智能体工坊</h2>
         <p class="page-subtitle">
-          集中编排 Prompt 人设模板、采样温度与开场快捷提问，一键分发至 AI 调试台使用
+          专注恋爱情感场景：编排高情商话术、脱单约会、亲密关系与情绪疗愈人设模板，一键分发至对话工作台
         </p>
       </div>
       <div class="header-actions">
@@ -362,7 +359,7 @@ onMounted(() => {
               <el-input
                 v-model="form.code"
                 :disabled="editingId !== null"
-                placeholder="如: legal_advisor"
+                placeholder="如: long_distance_coach"
               />
             </el-form-item>
           </el-col>

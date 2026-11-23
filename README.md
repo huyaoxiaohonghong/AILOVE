@@ -171,11 +171,14 @@ docker compose --env-file backend/.env -f docker-compose.prod.yml logs -f backen
 - `GET /api/v1/miniapp/user/profile` — 获取当前小程序用户信息
 - `GET /api/v1/admin/ai/providers` / `GET /api/v1/admin/ai/configs` / `POST /api/v1/admin/ai/configs` / `PUT /api/v1/admin/ai/configs/{id}` — AI 提供商注册表与 DeepSeek 模型动态配置（Fernet 加密 API Key + Redis 热生效）
 - `POST /api/v1/admin/ai/configs/{id}/set-default` / `POST /api/v1/admin/ai/configs/{id}/test` — 切换全局默认模型与一键连通性延迟探针
-- `GET /api/v1/system/public-config` — 公开运行时站点配置、注册/滑块开关与密码强度策略（热生效）
-- `GET /api/v1/admin/system/configs` / `PUT /api/v1/admin/system/configs` / `POST /api/v1/admin/system/configs/reset` — 5 分组 17 项动态系统配置查询、批量热更新与默认值重置
-- `GET /api/v1/admin/rbac/permissions` / `GET / POST / PUT / DELETE /api/v1/admin/rbac/roles` — 全站 15 项细粒度权限点树、内置与自定义角色管理及 `PATCH /api/v1/admin/accounts/{id}/role` 授权变更
+- `GET /api/v1/system/public-config` — 公开运行时站点配置、注册/滑块/邮箱验证开关与密码强度策略（热生效）
+- `GET /api/v1/admin/system/configs` / `PUT /api/v1/admin/system/configs` / `POST /api/v1/admin/system/configs/reset` — 6 分组动态系统配置查询（含 Fernet 加密 SMTP 邮件组）、批量热更新与默认值重置
+- `POST /api/v1/admin/system/smtp/test` — 发送 SMTP 邮件通道连通性测试邮件
+- `POST /api/v1/auth/email-code/send` / `POST /api/v1/auth/reset-password` — 发送 6 位一次性邮箱验证码（支持注册核验与忘记密码自助重置并下线旧会话）
+- `GET /api/v1/admin/rbac/permissions` / `GET / POST / PUT / DELETE /api/v1/admin/rbac/roles` — 全站细粒度权限点树、内置与自定义角色管理及 `PATCH /api/v1/admin/accounts/{id}/role` 授权变更
 - `GET /api/v1/admin/logs/summary` / `GET /api/v1/admin/logs/audit` / `GET /api/v1/admin/logs/login` / `POST /api/v1/admin/logs/cleanup` — 24h 安全概览、脱敏操作审计分页、全站登录审计与日志清理
-- `GET /api/v1/ai/models` / `POST /api/v1/ai/chat` / `POST /api/v1/ai/chat/stream` — 获取可用模型与 LangChain 同步 / SSE 流式多轮对话（支持 OpenAI / Anthropic 双协议、实时系统时钟注入、思考链流与 Token 统计）
+- `GET /api/v1/ai/models` / `GET /api/v1/ai/personas` / `GET /api/v1/ai/quota` / `POST /api/v1/ai/chat` / `POST /api/v1/ai/chat/stream` — 可用模型、智能体广场、个人今日配额与 LangChain 同步 / SSE 流式多轮对话（支持 OpenAI / Anthropic 双协议、实时系统时钟注入、思考链流与 Token 统计）
+- `GET / POST / PUT / DELETE /api/v1/admin/ai/personas*` / `GET /api/v1/admin/ai/analytics` — 智能体工坊模板管理与近 7/14 日 AI 调用趋势、模型占比与活跃排行榜统计
 - `GET /api/v1/ai/conversations` / `GET /api/v1/ai/conversations/{session_id}/messages` / `PATCH / DELETE /api/v1/ai/conversations/{session_id}` — 持久化 AI 历史会话列表、上下文恢复、重命名与删除（按账号严格隔离）
 - `GET /api/v1/ai/sessions/{session_id}/history` — 查询当前账号本人的会话上下文（按账号隔离）
 - `DELETE /api/v1/ai/sessions/{session_id}` — 清空当前账号本人的会话记忆

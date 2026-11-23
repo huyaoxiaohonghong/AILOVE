@@ -5,6 +5,7 @@ import {
   fetchHealth,
   fetchSystemConfigs,
   resetSystemConfigs,
+  sendSmtpTestEmail,
   updateSystemConfigs,
   type HealthData,
   type SysConfigGroup,
@@ -21,6 +22,8 @@ const activeTab = ref('site')
 const groups = ref<SysConfigGroup[]>([])
 const draft = reactive<Record<string, string | number | boolean>>({})
 const health = ref<HealthData | null>(null)
+const smtpTestEmail = ref('')
+const smtpTesting = ref(false)
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 const appTitle = import.meta.env.VITE_APP_TITLE || 'AILOVE 管理后台'
@@ -49,7 +52,14 @@ async function loadAll() {
 async function handleSaveGroup(group: SysConfigGroup) {
   const payload: Record<string, string | number | boolean> = {}
   for (const item of group.items) {
-    payload[item.config_key] = draft[item.config_key] ?? item.value
+    const val = draft[item.config_key]
+    if (item.is_secret) {
+      if (typeof val === 'string' && val.trim()) {
+        payload[item.config_key] = val.trim()
+      }
+      continue
+    }
+    payload[item.config_key] = val ?? item.value
   }
   saving.value = true
   try {
@@ -60,6 +70,23 @@ async function handleSaveGroup(group: SysConfigGroup) {
     ElMessage.success(`「${group.label}」配置已保存并即时热生效`)
   } finally {
     saving.value = false
+  }
+}
+
+async function handleTestSmtp() {
+  const target = smtpTestEmail.value.trim()
+  if (!target || !target.includes('@')) {
+    ElMessage.warning('请输入接收测试邮件的有效邮箱地址')
+    return
+  }
+  smtpTesting.value = true
+  try {
+    const res = await sendSmtpTestEmail(target)
+    ElMessage.success(
+      `测试邮件已发往 ${res.to_email}（${res.host}:${res.port}，耗时 ${res.latency_ms}ms）`,
+    )
+  } finally {
+    smtpTesting.value = false
   }
 }
 
@@ -131,6 +158,9 @@ onMounted(() => {
                   <el-tag v-if="item.is_public" size="small" type="success" effect="plain">
                     公共可见
                   </el-tag>
+                  <el-tag v-if="item.is_secret && item.has_secret" size="small" type="warning" effect="plain">
+                    已加密 · {{ item.masked_value }}
+                  </el-tag>
                 </div>
                 <p class="config-desc">{{ item.description }}</p>
               </div>
@@ -153,6 +183,33 @@ onMounted(() => {
                     style="width: 180px"
                   />
                 </template>
+                <template v-else-if="item.config_key === 'email.smtp_security'">
+                  <el-select
+                    v-model="(draft[item.config_key] as string)"
+                    :disabled="!canManage"
+                    style="width: 240px"
+                  >
+                    <el-option label="SSL 加密 (推荐 465)" value="ssl" />
+                    <el-option label="STARTTLS (常见 587)" value="starttls" />
+                    <el-option label="无加密 (仅内网调试)" value="none" />
+                  </el-select>
+                </template>
+                <template v-else-if="item.is_secret">
+                  <el-input
+                    v-model="(draft[item.config_key] as string)"
+                    type="password"
+                    show-password
+                    autocomplete="new-password"
+                    :disabled="!canManage"
+                    :placeholder="
+                      item.has_secret
+                        ? '已加密保存（留空则保持原密钥不变）'
+                        : '请输入 SMTP 授权码或密码'
+                    "
+                    clearable
+                    style="width: 300px"
+                  />
+                </template>
                 <template v-else>
                   <el-input
                     v-model="(draft[item.config_key] as string)"
@@ -163,6 +220,24 @@ onMounted(() => {
                   />
                 </template>
               </div>
+            </div>
+          </div>
+
+          <div v-if="group.group === 'email' && canManage" class="smtp-test-box">
+            <div class="smtp-test-info">
+              <strong>SMTP 连通性测试</strong>
+              <span>请先点击下方「保存并热生效」保存参数，再输入收件邮箱验证发信通道。</span>
+            </div>
+            <div class="smtp-test-actions">
+              <el-input
+                v-model="smtpTestEmail"
+                placeholder="输入接收测试邮件的邮箱地址"
+                clearable
+                style="width: 260px"
+              />
+              <el-button type="primary" plain :loading="smtpTesting" @click="handleTestSmtp">
+                发送测试邮件
+              </el-button>
             </div>
           </div>
 
@@ -301,5 +376,37 @@ onMounted(() => {
 .health-sub {
   font-size: 13px;
   color: var(--ailove-ink-secondary);
+}
+
+.smtp-test-box {
+  margin-top: 16px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  border: 1px dashed var(--ailove-brand-200);
+  background: var(--ailove-brand-50);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.smtp-test-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12.5px;
+  color: var(--ailove-ink-secondary);
+}
+
+.smtp-test-info strong {
+  font-size: 13.5px;
+  color: var(--ailove-ink-primary);
+}
+
+.smtp-test-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 </style>

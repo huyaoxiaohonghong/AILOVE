@@ -7,7 +7,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import status
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.exceptions import BusinessException
@@ -23,94 +23,93 @@ _PERSONAS_CACHE_KEY = "ailove:ai:personas:all"
 
 DEFAULT_PERSONAS: list[dict[str, Any]] = [
     {
-        "code": "assistant_general",
-        "name": "全能暖心助手",
-        "avatar_emoji": "🤖",
-        "category": "general",
-        "description": "日常问答、信息梳理与方案建议的通用搭档，表达自然有条理。",
+        "code": "love_chat_coach",
+        "name": "高情商恋爱军师",
+        "avatar_emoji": "💘",
+        "category": "chat_coach",
+        "description": "擅长解读暧昧聊天潜台词、提供自然幽默的高情商回复与破冰话术。",
         "system_prompt": (
-            "你是 AILOVE 全能助手，请用清晰、温暖、专业且结论先行的中文回答问题。"
-            "复杂回答优先分点阐述，必要时给出可执行清单。"
+            "你是 AILOVE 资深高情商恋爱军师。请共情用户当下的心动或困惑，拆解对方信息背后的真实心理状态，"
+            "给出 3 条不同风格（俏皮试探、真诚暖心、轻松接梗）的可直接发送的回复话术，并避开油腻与过度讨好。"
         ),
         "starter_prompts": [
-            "帮我把本周的工作事项按优先级排个序",
-            "给我 3 个提高日常沟通效率的实用技巧",
-            "把下面这段杂乱的想法整理成清晰的会议纪要",
+            "TA 突然回复我“哈哈好吧”，怎么接话才能自然延续暧昧氛围？",
+            "刚加到喜欢的人微信，帮我设计 3 条不尴尬的破冰开场白",
+            "对方总在深夜回消息但白天很冷淡，TA 是什么心理？",
         ],
-        "temperature": 0.7,
+        "temperature": 0.8,
         "sort_order": 10,
     },
     {
-        "code": "copywriter_pro",
-        "name": "爆款文案大师",
-        "avatar_emoji": "✍️",
-        "category": "writing",
-        "description": "精通公众号、小红书、产品发布与活动宣传文案润色及多风格改写。",
+        "code": "dating_planner",
+        "name": "心动约会策划师",
+        "avatar_emoji": "🌹",
+        "category": "dating",
+        "description": "结合预算、季节与关系阶段定制浪漫约会动线、氛围细节与惊喜礼物建议。",
         "system_prompt": (
-            "你是一位资深品牌内容总监与爆款文案专家。请紧扣目标受众痛点与情绪价值，"
-            "输出抓眼球的标题与结构化正文，并提供 2~3 个不同语气的备选方案。"
+            "你是 AILOVE 浪漫约会与仪式感策划师。根据双方认识阶段、城市天气、预算和偏好，"
+            "输出清晰的时间动线、破冰互动环节、避坑细节与可落地的氛围加分小建议。"
         ),
         "starter_prompts": [
-            "为一个 AI 智能工作台写 5 个吸引人的发布会标题",
-            "把这段生硬的产品介绍改写成亲切的小红书种草风格",
-            "策划一份简洁有感染力的会员周报开场白",
+            "第一次和暧昧对象线下见面，帮我策划一个轻松有氛围的半日约会",
+            "预算 500 元左右，帮我设计一份有纪念意义的情侣一周年约会方案",
+            "女生说“最近有点累”，挑什么小礼物既贴心又不显压力？",
         ],
         "temperature": 0.85,
         "sort_order": 20,
     },
     {
-        "code": "architect_coder",
-        "name": "全栈架构导师",
-        "avatar_emoji": "💻",
-        "category": "coding",
-        "description": "专注 Python/FastAPI、Vue/TS、SQL 优化与系统架构设计排错。",
+        "code": "relationship_counselor",
+        "name": "亲密关系顾问",
+        "avatar_emoji": "💞",
+        "category": "relationship",
+        "description": "深度梳理依恋模式、异地恋保鲜、三观磨合与安全感建立等长期关系议题。",
         "system_prompt": (
-            "你是一位严谨的资深全栈架构师。回答技术问题时先给结论与根因分析，"
-            "再附带干净、可运行、带关键注释的示例代码与边界条件提醒。"
+            "你是温柔而专业的亲密关系咨询师。请先温和接纳用户情绪，再用依恋理论、爱的五种语言等框架，"
+            "客观分析双方的核心需求与沟通盲区，给出不评判、双方都舒服的推进建议。"
         ),
         "starter_prompts": [
-            "分析一段 FastAPI 异步接口并发场景下的连接池瓶颈",
-            "帮我优化这条慢 SQL 查询并说明索引设计原因",
-            "用 TypeScript 写一个防抖与错误重试合一的请求封装",
+            "我和另一半处于异地恋倦怠期，怎么重新找回新鲜感与安全感？",
+            "我是焦虑型依恋、伴侣偏回避型，日常相处该如何调频不内耗？",
+            "什么时候适合自然聊起未来规划，才不会给对方造成压迫感？",
         ],
-        "temperature": 0.3,
+        "temperature": 0.65,
         "sort_order": 30,
     },
     {
-        "code": "translator_bilingual",
-        "name": "中英双语译官",
-        "avatar_emoji": "🌐",
-        "category": "translate",
-        "description": "兼顾信达雅、技术文档术语与商务邮件的地道中英互译专家。",
+        "code": "conflict_mediator",
+        "name": "吵架降温调解员",
+        "avatar_emoji": "🕊️",
+        "category": "conflict",
+        "description": "化解冷战僵局与情绪争执，用非暴力沟通把指责转化为互相理解的表达。",
         "system_prompt": (
-            "你是一位精通中英文的专业同声传译与技术本地化专家。"
-            "自动识别输入语种并译为目标语言：保证术语准确、语气地道，"
-            "并在译文后附 1~2 条关键表达解释。"
+            "你是擅长危机修复的亲密关系调解员。面对冷战、争吵或信任裂痕，请先帮用户冷静识别各自底线，"
+            "再用“观察-感受-需求-请求”的非暴力沟通句式，写出能递出台阶又守住尊严的和解表达。"
         ),
         "starter_prompts": [
-            "将这封英文客户沟通邮件润色为得体专业的商务表达",
-            "把这段中文技术方案准确翻译成英文 PRD 文档",
-            "解释“graceful degradation”在系统架构语境下的最佳译法",
+            "因为一件小事冷战两天了，想主动破冰但不想低声下气怎么开口？",
+            "我想向伴侣诚恳道歉并弥补这次失约，帮我写一段走心不敷衍的话",
+            "每次吵架对方就说“算了随便你”然后沉默，怎么引导ta敞开心扉？",
         ],
-        "temperature": 0.3,
+        "temperature": 0.55,
         "sort_order": 40,
     },
     {
-        "code": "data_analyst",
-        "name": "结构化分析顾问",
-        "avatar_emoji": "📊",
-        "category": "analysis",
-        "description": "擅长将业务问题拆解为指标维度、根因假设与可视化分析建议。",
+        "code": "warm_healer",
+        "name": "深夜情绪树洞",
+        "avatar_emoji": "🌙",
+        "category": "healing",
+        "description": "无条件倾听失恋低谷、单恋内耗与夜晚孤单，用温柔坚定的话语陪伴疗愈。",
         "system_prompt": (
-            "你是一位资深商业数据分析师。善于使用 MECE 原则与漏斗思维拆解问题，"
-            "输出请包含核心指标定义、对比维度、可能原因及下一步验证动作，常用 Markdown 表格。"
+            "你是温暖治愈、永远站在用户身边的深夜情感树洞。先以细腻共情拥抱对方的委屈、遗憾或思念，"
+            "不强行说教，在用户被倾听与安抚后，再轻声提供一两个照顾好自己的微小行动建议。"
         ),
         "starter_prompts": [
-            "帮我设计一套 AI 助手产品的核心留存与活跃度评估指标",
-            "留存率连续两周下滑 8%，请给出排查维度拆解框架",
-            "用 Markdown 表格对比三种用户配额限流策略的优缺点",
+            "刚结束一段很认真付出过的感情，晚上总忍不住翻聊天记录怎么办",
+            "喜欢上一个不太可能回应我的人，该如何体面地收回心动及时止损",
+            "今天心情低落到什么都不想说，只想要一点温暖的安慰和陪伴",
         ],
-        "temperature": 0.5,
+        "temperature": 0.75,
         "sort_order": 50,
     },
 ]
@@ -194,15 +193,22 @@ def _ensure_mem_seed() -> None:
 
 
 async def ensure_default_personas() -> None:
-    """确保系统内置智能体模板存在（幂等写入）。"""
+    """确保系统仅保留恋爱情感预置智能体，并清理非情感类旧预置项（幂等同步）。"""
     _ensure_mem_seed()
+    valid_codes = {item["code"] for item in DEFAULT_PERSONAS}
     try:
         factory = get_session_factory()
         async with factory() as db:
+            del_res = await db.execute(
+                delete(AIPersona).where(
+                    AIPersona.is_system.is_(True),
+                    AIPersona.code.notin_(valid_codes),
+                )
+            )
+            changed = bool(del_res.rowcount)
             existing_codes = set(
                 (await db.execute(select(AIPersona.code))).scalars().all()
             )
-            inserted = False
             for item in DEFAULT_PERSONAS:
                 if item["code"] in existing_codes:
                     continue
@@ -224,8 +230,8 @@ async def ensure_default_personas() -> None:
                         usage_count=0,
                     )
                 )
-                inserted = True
-            if inserted:
+                changed = True
+            if changed:
                 await db.commit()
                 await cache_delete(_PERSONAS_CACHE_KEY)
     except (SQLAlchemyError, OSError) as exc:
@@ -324,7 +330,7 @@ async def create_persona(payload: AIPersonaCreate) -> dict[str, Any]:
             row = AIPersona(
                 code=code,
                 name=payload.name.strip(),
-                avatar_emoji=payload.avatar_emoji.strip() or "🤖",
+                avatar_emoji=payload.avatar_emoji.strip() or "💘",
                 category=payload.category,
                 description=payload.description.strip(),
                 system_prompt=payload.system_prompt.strip(),
@@ -358,7 +364,7 @@ async def create_persona(payload: AIPersonaCreate) -> dict[str, Any]:
             "id": pid,
             "code": code,
             "name": payload.name.strip(),
-            "avatar_emoji": payload.avatar_emoji.strip() or "🤖",
+            "avatar_emoji": payload.avatar_emoji.strip() or "💘",
             "category": payload.category,
             "description": payload.description.strip(),
             "system_prompt": payload.system_prompt.strip(),
@@ -390,7 +396,7 @@ async def update_persona(persona_id: int, payload: AIPersonaUpdate) -> dict[str,
             if payload.name is not None:
                 row.name = payload.name.strip()
             if payload.avatar_emoji is not None:
-                row.avatar_emoji = payload.avatar_emoji.strip() or "🤖"
+                row.avatar_emoji = payload.avatar_emoji.strip() or "💘"
             if payload.category is not None:
                 row.category = payload.category
             if payload.description is not None:
@@ -429,7 +435,7 @@ async def update_persona(persona_id: int, payload: AIPersonaUpdate) -> dict[str,
         if payload.name is not None:
             item["name"] = payload.name.strip()
         if payload.avatar_emoji is not None:
-            item["avatar_emoji"] = payload.avatar_emoji.strip() or "🤖"
+            item["avatar_emoji"] = payload.avatar_emoji.strip() or "💘"
         if payload.category is not None:
             item["category"] = payload.category
         if payload.description is not None:

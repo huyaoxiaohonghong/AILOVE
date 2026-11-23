@@ -100,7 +100,7 @@ export interface AiChatResult {
   token_usage: number
 }
 
-export type PersonaCategory = 'general' | 'writing' | 'coding' | 'translate' | 'analysis'
+export type PersonaCategory = 'dating' | 'chat_coach' | 'relationship' | 'conflict' | 'healing'
 
 export interface AIPersonaItem {
   id: number

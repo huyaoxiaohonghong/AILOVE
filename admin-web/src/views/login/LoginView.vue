@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import {
   checkEmailPolicy,
+  resetPasswordByEmail,
+  sendEmailCode,
   type CaptchaScene,
   type EmailAnalysisResult,
 } from '@/api/auth'
@@ -23,12 +25,51 @@ const registrationAllowed = computed(
   () => publicCfg.value.registration_enabled && !publicCfg.value.maintenance_mode,
 )
 
-const activeTab = ref<'login' | 'register'>('login')
+const activeTab = ref<'login' | 'register' | 'reset'>('login')
 const submitting = ref(false)
+const sendingCode = ref(false)
 
 // 弹窗滑动验证
 const captchaDialogVisible = ref(false)
 const captchaScene = ref<CaptchaScene>('login')
+const captchaAction = ref<'login' | 'register' | 'send_register_code' | 'send_reset_code'>('login')
+
+const captchaDialogTitle = computed(() => {
+  if (captchaAction.value === 'login') return '登录安全验证'
+  if (captchaAction.value === 'send_reset_code') return '找回密码安全验证'
+  if (captchaAction.value === 'send_register_code') return '发送验证码安全验证'
+  return '注册安全验证'
+})
+
+// 倒计时状态
+const regCooldown = ref(0)
+const resetCooldown = ref(0)
+let regTimer: number | null = null
+let resetTimer: number | null = null
+
+function startCooldown(kind: 'register' | 'reset_password', seconds = 60) {
+  if (kind === 'register') {
+    if (regTimer !== null) window.clearInterval(regTimer)
+    regCooldown.value = seconds
+    regTimer = window.setInterval(() => {
+      regCooldown.value = Math.max(0, regCooldown.value - 1)
+      if (regCooldown.value === 0 && regTimer !== null) {
+        window.clearInterval(regTimer)
+        regTimer = null
+      }
+    }, 1000)
+  } else {
+    if (resetTimer !== null) window.clearInterval(resetTimer)
+    resetCooldown.value = seconds
+    resetTimer = window.setInterval(() => {
+      resetCooldown.value = Math.max(0, resetCooldown.value - 1)
+      if (resetCooldown.value === 0 && resetTimer !== null) {
+        window.clearInterval(resetTimer)
+        resetTimer = null
+      }
+    }, 1000)
+  }
+}
 
 // 登录表单
 const loginFormRef = ref<FormInstance>()
@@ -48,6 +89,7 @@ const emailChecking = ref(false)
 const emailCheckResult = ref<EmailAnalysisResult | null>(null)
 const registerForm = reactive({
   email: '',
+  email_code: '',
   nickname: '',
   password: '',
   confirmPassword: '',
@@ -55,6 +97,12 @@ const registerForm = reactive({
 
 const registerRules = computed<FormRules>(() => ({
   email: [{ required: true, message: '请输入正规公共邮箱地址', trigger: 'blur' }],
+  email_code: publicCfg.value.email_verify_required
+    ? [
+        { required: true, message: '请输入 6 位邮箱验证码', trigger: 'blur' },
+        { pattern: /^\d{6}$/, message: '验证码应为 6 位数字', trigger: 'blur' },
+      ]
+    : [],
   password: [
     { required: true, message: '请设置登录密码', trigger: 'blur' },
     {
@@ -78,6 +126,54 @@ const registerRules = computed<FormRules>(() => ({
     {
       validator: (_rule, value: string, callback) => {
         if (value !== registerForm.password) {
+          callback(new Error('两次输入的密码不一致'))
+        } else {
+          callback()
+        }
+      },
+      trigger: 'blur',
+    },
+  ],
+}))
+
+// 找回密码表单
+const resetFormRef = ref<FormInstance>()
+const resetForm = reactive({
+  email: '',
+  email_code: '',
+  new_password: '',
+  confirmPassword: '',
+})
+
+const resetRules = computed<FormRules>(() => ({
+  email: [{ required: true, message: '请输入注册邮箱地址', trigger: 'blur' }],
+  email_code: [
+    { required: true, message: '请输入 6 位邮箱验证码', trigger: 'blur' },
+    { pattern: /^\d{6}$/, message: '验证码应为 6 位数字', trigger: 'blur' },
+  ],
+  new_password: [
+    { required: true, message: '请设置新登录密码', trigger: 'blur' },
+    {
+      min: passwordMinLength.value,
+      message: `密码长度至少为 ${passwordMinLength.value} 位`,
+      trigger: 'blur',
+    },
+    {
+      validator: (_rule, value: string, callback) => {
+        if (value && (!/[A-Za-z]/.test(value) || !/\d/.test(value))) {
+          callback(new Error('密码需同时包含字母和数字'))
+        } else {
+          callback()
+        }
+      },
+      trigger: 'blur',
+    },
+  ],
+  confirmPassword: [
+    { required: true, message: '请再次输入新密码', trigger: 'blur' },
+    {
+      validator: (_rule, value: string, callback) => {
+        if (value !== resetForm.new_password) {
           callback(new Error('两次输入的密码不一致'))
         } else {
           callback()
@@ -152,6 +248,7 @@ async function submitAuthWithToken(scene: CaptchaScene, captchaToken: string) {
         password: registerForm.password,
         nickname: registerForm.nickname.trim() || undefined,
         captcha_token: captchaToken,
+        email_code: registerForm.email_code.trim() || undefined,
       })
       captchaDialogVisible.value = false
       ElMessage.success(`注册成功，欢迎加入 ${publicCfg.value.site_name || 'AILOVE'}，${res.user.nickname}`)
@@ -164,6 +261,90 @@ async function submitAuthWithToken(scene: CaptchaScene, captchaToken: string) {
   }
 }
 
+async function executeSendEmailCode(scene: 'register' | 'reset_password', captchaToken: string) {
+  const email = (scene === 'register' ? registerForm.email : resetForm.email).trim()
+  sendingCode.value = true
+  try {
+    const res = await sendEmailCode({ email, scene, captcha_token: captchaToken })
+    captchaDialogVisible.value = false
+    startCooldown(scene, res.cooldown_seconds || 60)
+    ElMessage.success(`验证码已发往 ${res.email}，${res.expire_minutes} 分钟内有效`)
+  } catch {
+    captchaDialogVisible.value = false
+  } finally {
+    sendingCode.value = false
+  }
+}
+
+async function handleSendRegisterCode() {
+  if (!registrationAllowed.value) {
+    ElMessage.warning('当前未开放自助注册，请联系管理员分配账号')
+    return
+  }
+  const emailOk = await registerFormRef.value
+    ?.validateField('email')
+    .then(() => true)
+    .catch(() => false)
+  if (!emailOk) return
+
+  const normalized = registerForm.email.trim().toLowerCase()
+  if (!emailCheckResult.value || emailCheckResult.value.email !== normalized) {
+    await handleCheckEmail()
+  }
+  if (emailCheckResult.value && !emailCheckResult.value.allowed) {
+    ElMessage.error(emailCheckResult.value.summary)
+    return
+  }
+
+  if (!publicCfg.value.slider_captcha_enabled) {
+    await executeSendEmailCode('register', '')
+    return
+  }
+  captchaAction.value = 'send_register_code'
+  captchaScene.value = 'register'
+  captchaDialogVisible.value = true
+}
+
+async function handleSendResetCode() {
+  const emailOk = await resetFormRef.value
+    ?.validateField('email')
+    .then(() => true)
+    .catch(() => false)
+  if (!emailOk) return
+
+  if (!publicCfg.value.slider_captcha_enabled) {
+    await executeSendEmailCode('reset_password', '')
+    return
+  }
+  captchaAction.value = 'send_reset_code'
+  captchaScene.value = 'reset_password'
+  captchaDialogVisible.value = true
+}
+
+async function handleResetPasswordSubmit() {
+  const valid = await resetFormRef.value?.validate().catch(() => false)
+  if (!valid) return
+
+  submitting.value = true
+  try {
+    const email = resetForm.email.trim()
+    await resetPasswordByEmail({
+      email,
+      email_code: resetForm.email_code.trim(),
+      new_password: resetForm.new_password,
+    })
+    ElMessage.success('密码重置成功，请使用新密码登录')
+    loginForm.account = email
+    loginForm.password = ''
+    resetForm.email_code = ''
+    resetForm.new_password = ''
+    resetForm.confirmPassword = ''
+    activeTab.value = 'login'
+  } finally {
+    submitting.value = false
+  }
+}
+
 async function handleOpenLoginCaptcha() {
   const valid = await loginFormRef.value?.validate().catch(() => false)
   if (!valid) return
@@ -171,6 +352,7 @@ async function handleOpenLoginCaptcha() {
     await submitAuthWithToken('login', '')
     return
   }
+  captchaAction.value = 'login'
   captchaScene.value = 'login'
   captchaDialogVisible.value = true
 }
@@ -192,23 +374,37 @@ async function handleOpenRegisterCaptcha() {
     return
   }
 
-  if (!publicCfg.value.slider_captcha_enabled) {
+  if (publicCfg.value.email_verify_required || !publicCfg.value.slider_captcha_enabled) {
     await submitAuthWithToken('register', '')
     return
   }
+  captchaAction.value = 'register'
   captchaScene.value = 'register'
   captchaDialogVisible.value = true
 }
 
 async function handleCaptchaVerified(payload: { token: string; humanScore: number }) {
-  await submitAuthWithToken(captchaScene.value, payload.token)
+  if (captchaAction.value === 'send_register_code') {
+    await executeSendEmailCode('register', payload.token)
+    return
+  }
+  if (captchaAction.value === 'send_reset_code') {
+    await executeSendEmailCode('reset_password', payload.token)
+    return
+  }
+  await submitAuthWithToken(captchaAction.value, payload.token)
 }
 
 onMounted(async () => {
   await appStore.loadPublicConfig()
-  if (!registrationAllowed.value) {
+  if (!registrationAllowed.value && activeTab.value === 'register') {
     activeTab.value = 'login'
   }
+})
+
+onBeforeUnmount(() => {
+  if (regTimer !== null) window.clearInterval(regTimer)
+  if (resetTimer !== null) window.clearInterval(resetTimer)
 })
 
 function fillDefaultAdmin() {
@@ -266,12 +462,24 @@ function fillDefaultAdmin() {
         </div>
 
         <div class="form-head">
-          <h2>{{ activeTab === 'login' ? `欢迎回到 ${publicCfg.site_name || 'AILOVE'}` : `创建你的 ${publicCfg.site_name || 'AILOVE'} 账号` }}</h2>
+          <h2>
+            {{
+              activeTab === 'login'
+                ? `欢迎回到 ${publicCfg.site_name || 'AILOVE'}`
+                : activeTab === 'register'
+                  ? `创建你的 ${publicCfg.site_name || 'AILOVE'} 账号`
+                  : '找回登录密码'
+            }}
+          </h2>
           <p>
             {{
               activeTab === 'login'
                 ? '使用注册邮箱或管理员账号登录，支持多点会话与安全审计守护'
-                : '仅支持正规公共邮箱注册，点击提交后完成拼图滑动验证'
+                : activeTab === 'register'
+                  ? publicCfg.email_verify_required
+                    ? '仅支持正规公共邮箱注册，须完成邮箱 6 位验证码核验'
+                    : '仅支持正规公共邮箱注册，点击提交后完成拼图滑动验证'
+                  : '通过已绑定邮箱接收一次性验证码重置密码并刷新旧设备会话'
             }}
           </p>
         </div>
@@ -286,7 +494,7 @@ function fillDefaultAdmin() {
         />
 
         <!-- 精致胶囊分段切换器 -->
-        <div class="segmented-switch" role="tablist">
+        <div v-if="activeTab !== 'reset'" class="segmented-switch" role="tablist">
           <button
             type="button"
             role="tab"
@@ -308,6 +516,12 @@ function fillDefaultAdmin() {
           >
             邮箱注册
           </button>
+        </div>
+        <div v-else class="reset-nav-bar">
+          <span class="reset-nav-title">邮箱自助找回密码</span>
+          <el-button link type="primary" size="small" @click="activeTab = 'login'">
+            返回账号登录
+          </el-button>
         </div>
 
         <!-- 登录表单 -->
@@ -340,6 +554,12 @@ function fillDefaultAdmin() {
             />
           </el-form-item>
 
+          <div class="login-aux-row">
+            <el-button link type="primary" size="small" @click="activeTab = 'reset'">
+              忘记密码？通过邮箱重置
+            </el-button>
+          </div>
+
           <el-button
             type="primary"
             native-type="submit"
@@ -359,7 +579,7 @@ function fillDefaultAdmin() {
 
         <!-- 邮箱注册表单 -->
         <el-form
-          v-else
+          v-else-if="activeTab === 'register'"
           ref="registerFormRef"
           :model="registerForm"
           :rules="registerRules"
@@ -397,6 +617,25 @@ function fillDefaultAdmin() {
             </div>
             <div class="check-desc">{{ emailCheckResult.summary }}</div>
           </div>
+
+          <el-form-item v-if="publicCfg.email_verify_required" label="6 位邮箱验证码" prop="email_code">
+            <el-input
+              v-model="registerForm.email_code"
+              placeholder="请输入邮件收到的 6 位数字验证码"
+              maxlength="6"
+              clearable
+            >
+              <template #append>
+                <el-button
+                  :loading="sendingCode"
+                  :disabled="regCooldown > 0 || sendingCode"
+                  @click="handleSendRegisterCode"
+                >
+                  {{ regCooldown > 0 ? `${regCooldown}s 后重发` : '获取验证码' }}
+                </el-button>
+              </template>
+            </el-input>
+          </el-form-item>
 
           <el-form-item label="显示昵称（可选）" prop="nickname">
             <el-input
@@ -442,20 +681,104 @@ function fillDefaultAdmin() {
             立即注册
           </el-button>
         </el-form>
+
+        <!-- 忘记密码找回表单 -->
+        <el-form
+          v-else
+          ref="resetFormRef"
+          :model="resetForm"
+          :rules="resetRules"
+          label-position="top"
+          size="default"
+          class="auth-form"
+          @submit.prevent="handleResetPasswordSubmit"
+        >
+          <el-alert
+            v-if="!publicCfg.email_service_enabled"
+            title="管理员尚未开启 SMTP 邮件服务，暂无法自助下发重置验证码（可在「系统配置 -> SMTP 邮件服务」启用）。"
+            type="warning"
+            show-icon
+            :closable="false"
+            style="margin-bottom: 14px"
+          />
+
+          <el-form-item label="绑定注册邮箱" prop="email">
+            <el-input
+              v-model="resetForm.email"
+              placeholder="请输入账号绑定的邮箱地址"
+              prefix-icon="Message"
+              clearable
+            />
+          </el-form-item>
+
+          <el-form-item label="6 位邮箱验证码" prop="email_code">
+            <el-input
+              v-model="resetForm.email_code"
+              placeholder="请输入 6 位数字验证码"
+              maxlength="6"
+              clearable
+            >
+              <template #append>
+                <el-button
+                  :loading="sendingCode"
+                  :disabled="resetCooldown > 0 || sendingCode || !publicCfg.email_service_enabled"
+                  @click="handleSendResetCode"
+                >
+                  {{ resetCooldown > 0 ? `${resetCooldown}s 后重发` : '获取验证码' }}
+                </el-button>
+              </template>
+            </el-input>
+          </el-form-item>
+
+          <el-row :gutter="12">
+            <el-col :span="12">
+              <el-form-item label="设置新密码" prop="new_password">
+                <el-input
+                  v-model="resetForm.new_password"
+                  type="password"
+                  show-password
+                  :placeholder="`至少 ${passwordMinLength} 位含字母数字`"
+                  prefix-icon="Lock"
+                />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="确认新密码" prop="confirmPassword">
+                <el-input
+                  v-model="resetForm.confirmPassword"
+                  type="password"
+                  show-password
+                  placeholder="再次输入新密码"
+                  prefix-icon="Lock"
+                />
+              </el-form-item>
+            </el-col>
+          </el-row>
+
+          <el-button
+            type="primary"
+            native-type="submit"
+            :loading="submitting"
+            :disabled="!publicCfg.email_service_enabled"
+            class="submit-btn"
+          >
+            验证并重置密码
+          </el-button>
+        </el-form>
       </section>
     </div>
 
-    <!-- 点击登录/注册后触发的拼图滑块验证弹窗 -->
+    <!-- 点击登录/注册/发送验证码后触发的拼图滑块验证弹窗 -->
     <el-dialog
       v-model="captchaDialogVisible"
-      :title="captchaScene === 'login' ? '登录安全验证' : '注册安全验证'"
+      :title="captchaDialogTitle"
       width="376px"
       align-center
       destroy-on-close
       :close-on-click-modal="false"
     >
       <div
-        v-loading="submitting"
+        v-loading="submitting || sendingCode"
         element-loading-text="人机验证通过，正在安全提交..."
         class="dialog-captcha"
       >
@@ -761,6 +1084,29 @@ function fillDefaultAdmin() {
   font-size: 15px;
   border-radius: 10px;
   margin-top: 8px;
+}
+
+.login-aux-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: -8px 0 6px;
+}
+
+.reset-nav-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  margin-bottom: 18px;
+  border-radius: 10px;
+  background: var(--ailove-canvas);
+  border: 1px solid var(--ailove-border);
+}
+
+.reset-nav-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ailove-ink-primary);
 }
 
 .auth-footer-hint {

@@ -40,6 +40,9 @@ class RateLimiter:
                 await client.expire(rkey, win)
             if count > cap:
                 ttl = int(await client.ttl(rkey))
+                if ttl == -1:
+                    await client.expire(rkey, win)
+                    ttl = win
                 retry_after = max(1, ttl if ttl > 0 else win)
                 return False, 0, retry_after
             return True, max(0, cap - count), 0
@@ -101,7 +104,7 @@ def rate_limit(
         if not allowed:
             raise BusinessException(
                 f"请求过于频繁，请约 {retry_after} 秒后再试",
-                code=42902,
+                code=42904,
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             )
 

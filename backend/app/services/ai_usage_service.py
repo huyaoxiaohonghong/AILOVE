@@ -234,12 +234,15 @@ async def record_usage(
         req_key, tok_key = _quota_keys(owner_scope, yyyymmdd)
         try:
             redis = get_redis()
-            pipe = redis.pipeline()
-            pipe.incrby(req_key, 1)
-            pipe.expire(req_key, 172800)
-            pipe.incrby(tok_key, max(0, int(norm_total)))
-            pipe.expire(tok_key, 172800)
-            await pipe.execute()
+            if await redis.exists(req_key, tok_key) == 2:
+                pipe = redis.pipeline()
+                pipe.incrby(req_key, 1)
+                pipe.expire(req_key, 172800)
+                pipe.incrby(tok_key, max(0, int(norm_total)))
+                pipe.expire(tok_key, 172800)
+                await pipe.execute()
+            else:
+                await redis.delete(req_key, tok_key)
         except Exception:
             pass
 

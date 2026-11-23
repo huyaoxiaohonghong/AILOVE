@@ -17,14 +17,14 @@ class AIPersona(Base, TimestampMixin):
     )
     name: Mapped[str] = mapped_column(String(64), nullable=False, comment="智能体名称")
     avatar_emoji: Mapped[str] = mapped_column(
-        String(16), default="🤖", nullable=False, comment="头像图标 Emoji"
+        String(16), default="💘", nullable=False, comment="头像图标 Emoji"
     )
     category: Mapped[str] = mapped_column(
         String(32),
         index=True,
-        default="general",
+        default="chat_coach",
         nullable=False,
-        comment="分类: general/writing/coding/translate/analysis",
+        comment="分类: dating/chat_coach/relationship/conflict/healing",
     )
     description: Mapped[str] = mapped_column(
         String(255), default="", nullable=False, comment="一句话简介"

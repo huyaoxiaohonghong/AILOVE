@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends
 
 from app.api.deps import require_permissions
 from app.schemas.common import ok
-from app.schemas.system import SysConfigBatchUpdateRequest, SysConfigResetRequest
-from app.services import sys_config_service
+from app.schemas.system import SmtpTestRequest, SysConfigBatchUpdateRequest, SysConfigResetRequest
+from app.services import email_service, sys_config_service
 
 router = APIRouter(prefix="/system", tags=["管理端-动态系统配置中心"])
 
@@ -37,3 +37,12 @@ async def reset_system_configs(
     admin_id = int(current_admin.get("sub", 0))
     data = await sys_config_service.reset_configs(req.group_name, admin_id=admin_id)
     return ok(data, message="已恢复系统默认配置并实时生效")
+
+
+@router.post("/smtp/test", summary="发送 SMTP 连通性测试邮件")
+async def test_smtp_delivery(
+    req: SmtpTestRequest,
+    _current_admin: dict[str, Any] = Depends(require_permissions("system:config:manage")),
+):
+    res = await email_service.send_test_email(req.to_email)
+    return ok(res, message=f"测试邮件发送成功（耗时 {res['latency_ms']}ms）")

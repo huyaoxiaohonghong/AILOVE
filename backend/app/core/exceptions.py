@@ -49,7 +49,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         errors = exc.errors()
         first_msg = errors[0].get("msg", "参数校验失败") if errors else "参数校验失败"
         return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content={
                 "code": 42200,
                 "message": f"请求参数错误: {first_msg}",

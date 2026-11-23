@@ -1,6 +1,6 @@
 import { request } from '@/utils/request'
 
-export type CaptchaScene = 'login' | 'register'
+export type CaptchaScene = 'login' | 'register' | 'reset_password'
 
 export interface SliderChallenge {
   captcha_id: string
@@ -132,14 +132,49 @@ export function checkEmailPolicy(email: string) {
   })
 }
 
+export function sendEmailCode(data: {
+  email: string
+  scene: 'register' | 'reset_password'
+  captcha_token: string
+}) {
+  return request<{
+    sent: boolean
+    email: string
+    scene: 'register' | 'reset_password'
+    expire_minutes: number
+    cooldown_seconds: number
+  }>({
+    url: '/auth/email-code/send',
+    method: 'post',
+    data,
+  })
+}
+
 export function registerByEmail(data: {
   email: string
   password: string
   nickname?: string
   captcha_token: string
+  email_code?: string
 }) {
   return request<AuthTokenResult>({
     url: '/auth/register',
+    method: 'post',
+    data,
+  })
+}
+
+export function resetPasswordByEmail(data: {
+  email: string
+  email_code: string
+  new_password: string
+}) {
+  return request<{
+    reset: boolean
+    email: string
+    revoked_sessions: number
+  }>({
+    url: '/auth/reset-password',
     method: 'post',
     data,
   })

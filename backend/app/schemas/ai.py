@@ -113,14 +113,14 @@ class AIModelConfigItem(BaseModel):
     updated_at: datetime | None = None
 
 
-PersonaCategory = Literal["general", "writing", "coding", "translate", "analysis"]
+PersonaCategory = Literal["dating", "chat_coach", "relationship", "conflict", "healing"]
 
 
 class AIPersonaCreate(BaseModel):
     code: str = Field(..., min_length=2, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$", description="唯一编码")
     name: str = Field(..., min_length=1, max_length=64, description="智能体名称")
-    avatar_emoji: str = Field(default="🤖", min_length=1, max_length=16, description="Emoji 图标")
-    category: PersonaCategory = Field(default="general", description="智能体分类")
+    avatar_emoji: str = Field(default="💘", min_length=1, max_length=16, description="Emoji 图标")
+    category: PersonaCategory = Field(default="chat_coach", description="情感智能体分类")
     description: str = Field(default="", max_length=255, description="一句话简介")
     system_prompt: str = Field(..., min_length=4, max_length=6000, description="系统人设提示词")
     starter_prompts: list[str] = Field(default_factory=list, description="开场白快捷示例提示词")

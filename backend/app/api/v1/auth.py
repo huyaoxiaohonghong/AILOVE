@@ -13,6 +13,8 @@ from app.schemas.auth import (
     ChangePasswordRequest,
     EmailCheckRequest,
     EmailRegisterRequest,
+    ResetPasswordRequest,
+    SendEmailCodeRequest,
     UpdateProfileRequest,
 )
 from app.schemas.common import ok
@@ -22,6 +24,8 @@ from app.services.auth_service import (
     get_fresh_user_profile,
     login_account,
     register_user_by_email,
+    reset_password_by_email,
+    send_auth_email_code,
     update_own_profile,
 )
 from app.services.email_validator import email_trust_analyzer
@@ -47,6 +51,27 @@ async def check_email_policy(req: EmailCheckRequest):
         req.email, check_mx=True, strict_registration=True
     )
     return ok(analysis.to_dict())
+
+
+@router.post(
+    "/email-code/send",
+    summary="发送邮箱一次性验证码（支持注册核验与找回密码）",
+    dependencies=[Depends(rate_limit("email_code_send", limit=10, window_seconds=60))],
+)
+async def send_email_code(req: SendEmailCodeRequest):
+    result = await send_auth_email_code(req)
+    return ok(result, message="验证码邮件已发送，请注意查收")
+
+
+@router.post(
+    "/reset-password",
+    summary="通过邮箱验证码自助重置登录密码（同时下线旧设备会话）",
+    dependencies=[Depends(rate_limit("reset_password", limit=10, window_seconds=60))],
+)
+async def reset_password(req: ResetPasswordRequest, request: Request):
+    ip, ua = _extract_client_meta(request)
+    result = await reset_password_by_email(req, client_ip=ip, user_agent=ua)
+    return ok(result, message="密码已成功重置，请使用新密码重新登录")
 
 
 @router.post(

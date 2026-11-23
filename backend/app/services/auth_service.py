@@ -24,11 +24,13 @@ from app.schemas.auth import (
     ChangePasswordRequest,
     EmailRegisterRequest,
     MiniappUserProfile,
+    ResetPasswordRequest,
+    SendEmailCodeRequest,
     UserProfile,
     WxLoginRequest,
     WxLoginResponse,
 )
-from app.services import rbac_service, sys_config_service
+from app.services import email_service, rbac_service, sys_config_service
 from app.services.captcha_service import slider_captcha_engine
 from app.services.email_validator import email_trust_analyzer
 from app.services.session_service import (
@@ -209,13 +211,132 @@ async def ensure_default_admin() -> None:
         logger.warning("Skip default admin bootstrap (MySQL unavailable or not migrated): %s", exc)
 
 
+async def _find_user_by_email(email: str, canonical_email: str) -> dict[str, Any] | None:
+    """按邮箱/归一化邮箱查找平台用户基础信息（兼容 MySQL 与开发降级内存库）。"""
+    settings = get_settings()
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            user = (
+                await session.execute(
+                    select(User).where(
+                        or_(
+                            User.email == email,
+                            User.canonical_email == canonical_email,
+                        )
+                    )
+                )
+            ).scalar_one_or_none()
+            if user is None:
+                return None
+            return {
+                "id": int(user.id),
+                "email": user.email,
+                "username": user.username,
+                "is_active": bool(user.is_active),
+            }
+    except (SQLAlchemyError, OSError):
+        if settings.is_development and settings.ALLOW_DEV_FALLBACK_AUTH:
+            _ensure_dev_fallback_seed()
+            for item in _dev_fallback_users.values():
+                if item["email"] == email or item["canonical_email"] == canonical_email:
+                    return {
+                        "id": int(item["id"]),
+                        "email": item["email"],
+                        "username": item.get("username"),
+                        "is_active": bool(item.get("is_active", True)),
+                    }
+            return None
+        raise
+
+
+async def send_auth_email_code(req: SendEmailCodeRequest) -> dict[str, Any]:
+    """发送注册验证或重置密码用的 6 位一次性邮箱验证码。"""
+    if req.scene == "register":
+        if await sys_config_service.get_bool("site.maintenance_mode", default=False):
+            raise BusinessException(
+                "系统当前正在维护中，暂不开放新用户注册",
+                code=50305,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        if not await sys_config_service.get_bool("registration.enabled", default=True):
+            raise BusinessException(
+                "管理员已关闭邮箱自助注册，请联系管理员分配账号",
+                code=40305,
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+        if not await sys_config_service.get_bool("registration.email_verify_required", default=False):
+            raise BusinessException(
+                "当前未开启注册邮箱验证码校验，可直接提交注册",
+                code=40027,
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+    if await sys_config_service.get_bool("registration.slider_captcha_enabled", default=True):
+        await _consume_captcha_or_raise(req.captcha_token, scene=req.scene)
+
+    if req.scene == "register":
+        strict_email = await sys_config_service.get_bool(
+            "registration.strict_email_policy", default=True
+        )
+        analysis = await email_trust_analyzer.analyze(
+            req.email, check_mx=True, strict_registration=strict_email
+        )
+        if not analysis.allowed:
+            raise BusinessException(analysis.summary, code=40020)
+
+        existing = await _find_user_by_email(analysis.email, analysis.canonical_email)
+        if existing is not None:
+            raise BusinessException(
+                "该邮箱已注册（含同邮箱别名），请直接登录或找回密码",
+                code=40901,
+                status_code=status.HTTP_409_CONFLICT,
+            )
+        return await email_service.issue_and_send_code(
+            to_email=analysis.email,
+            canonical_email=analysis.canonical_email,
+            scene="register",
+        )
+
+    analysis = await email_trust_analyzer.analyze(
+        req.email, check_mx=False, strict_registration=False
+    )
+    if analysis.category in {"invalid_syntax", "homograph_attack"}:
+        raise BusinessException(analysis.summary, code=40020)
+
+    user_rec = await _find_user_by_email(analysis.email, analysis.canonical_email)
+    if user_rec is None:
+        raise BusinessException(
+            "该邮箱尚未注册账号，请确认后重试",
+            code=40401,
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    if not user_rec["is_active"]:
+        raise BusinessException(
+            "该账号已被禁用，请联系管理员处理",
+            code=40302,
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+    if str(user_rec["email"]).lower().endswith(".local"):
+        raise BusinessException(
+            "系统内置演示邮箱不支持邮件找回密码，请联系管理员重置",
+            code=40020,
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    return await email_service.issue_and_send_code(
+        to_email=user_rec["email"],
+        canonical_email=analysis.canonical_email,
+        scene="reset_password",
+    )
+
+
 async def register_user_by_email(
     req: EmailRegisterRequest,
     *,
     client_ip: str = "",
     user_agent: str = "",
 ) -> AuthTokenResponse:
-    """用户邮箱自助注册：结合系统动态策略校验滑动验证 + 正规邮箱算法 + 归一化防重。"""
+    """用户邮箱自助注册：结合系统动态策略校验滑动验证 / 邮箱验证码 + 正规邮箱算法 + 归一化防重。"""
     settings = get_settings()
 
     if await sys_config_service.get_bool("site.maintenance_mode", default=False):
@@ -231,8 +352,12 @@ async def register_user_by_email(
             status_code=status.HTTP_403_FORBIDDEN,
         )
 
-    if await sys_config_service.get_bool("registration.slider_captcha_enabled", default=True):
-        await _consume_captcha_or_raise(req.captcha_token, scene="register")
+    email_verify_required = await sys_config_service.get_bool(
+        "registration.email_verify_required", default=False
+    )
+    if not email_verify_required:
+        if await sys_config_service.get_bool("registration.slider_captcha_enabled", default=True):
+            await _consume_captcha_or_raise(req.captcha_token, scene="register")
 
     strict_email = await sys_config_service.get_bool(
         "registration.strict_email_policy", default=True
@@ -272,6 +397,13 @@ async def register_user_by_email(
                     "该邮箱已注册（含同邮箱别名），请直接登录",
                     code=40901,
                     status_code=status.HTTP_409_CONFLICT,
+                )
+
+            if email_verify_required:
+                await email_service.verify_and_consume_code(
+                    canonical_email=analysis.canonical_email,
+                    scene="register",
+                    submitted_code=req.email_code,
                 )
 
             user = User(
@@ -329,6 +461,13 @@ async def register_user_by_email(
                     code=40901,
                     status_code=status.HTTP_409_CONFLICT,
                 ) from exc
+
+        if email_verify_required:
+            await email_service.verify_and_consume_code(
+                canonical_email=analysis.canonical_email,
+                scene="register",
+                submitted_code=req.email_code,
+            )
 
         global _dev_fallback_seq
         _dev_fallback_seq += 1
@@ -710,6 +849,126 @@ async def change_own_password(
             user_id=user_id, keep_jti=current_jti
         )
     return {"changed": True, "revoked_other_devices": revoked_others}
+
+
+async def reset_password_by_email(
+    req: ResetPasswordRequest,
+    *,
+    client_ip: str = "",
+    user_agent: str = "",
+) -> dict[str, Any]:
+    """通过邮箱一次性验证码重置登录密码，并自动下线全部旧会话与解除锁定。"""
+    analysis = await email_trust_analyzer.analyze(
+        req.email, check_mx=False, strict_registration=False
+    )
+    if analysis.category in {"invalid_syntax", "homograph_attack"}:
+        raise BusinessException(analysis.summary, code=40020)
+
+    min_pwd_len = await sys_config_service.get_int("security.password_min_length", default=8)
+    validate_password_strength(req.new_password, min_length=min_pwd_len)
+
+    settings = get_settings()
+    new_hash = hash_password(req.new_password)
+    target_user_id = 0
+    target_email = analysis.email
+    target_username: str | None = None
+
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            user = (
+                await session.execute(
+                    select(User).where(
+                        or_(
+                            User.email == analysis.email,
+                            User.canonical_email == analysis.canonical_email,
+                        )
+                    )
+                )
+            ).scalar_one_or_none()
+            if user is None:
+                raise BusinessException(
+                    "该邮箱尚未注册账号",
+                    code=40401,
+                    status_code=status.HTTP_404_NOT_FOUND,
+                )
+            if not user.is_active:
+                raise BusinessException(
+                    "该账号已被禁用，请联系管理员处理",
+                    code=40302,
+                    status_code=status.HTTP_403_FORBIDDEN,
+                )
+
+            await email_service.verify_and_consume_code(
+                canonical_email=analysis.canonical_email,
+                scene="reset_password",
+                submitted_code=req.email_code,
+            )
+            user.password_hash = new_hash
+            await session.commit()
+            target_user_id = int(user.id)
+            target_email = user.email
+            target_username = user.username
+    except BusinessException:
+        raise
+    except (SQLAlchemyError, OSError) as exc:
+        if settings.is_development and settings.ALLOW_DEV_FALLBACK_AUTH:
+            _ensure_dev_fallback_seed()
+            matched = next(
+                (
+                    item
+                    for item in _dev_fallback_users.values()
+                    if item["email"] == analysis.email
+                    or item["canonical_email"] == analysis.canonical_email
+                ),
+                None,
+            )
+            if matched is None:
+                raise BusinessException(
+                    "该邮箱尚未注册账号",
+                    code=40401,
+                    status_code=status.HTTP_404_NOT_FOUND,
+                ) from exc
+            if not matched.get("is_active", True):
+                raise BusinessException(
+                    "该账号已被禁用，请联系管理员处理",
+                    code=40302,
+                    status_code=status.HTTP_403_FORBIDDEN,
+                ) from exc
+
+            await email_service.verify_and_consume_code(
+                canonical_email=analysis.canonical_email,
+                scene="reset_password",
+                submitted_code=req.email_code,
+            )
+            matched["password_hash"] = new_hash
+            target_user_id = int(matched["id"])
+            target_email = matched["email"]
+            target_username = matched.get("username")
+        else:
+            raise BusinessException(
+                "数据库暂不可用",
+                code=50301,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            ) from exc
+
+    revoked_count = await session_service.revoke_all_sessions(target_user_id)
+    await login_rate_limiter.clear_failures(target_email.lower())
+    if target_username:
+        await login_rate_limiter.clear_failures(target_username.lower())
+    await record_login_log(
+        user_id=target_user_id,
+        account=target_email,
+        ip=client_ip,
+        user_agent=user_agent,
+        status="success",
+        fail_reason="email_password_reset",
+    )
+    return {
+        "reset": True,
+        "email": target_email,
+        "revoked_sessions": revoked_count,
+    }
 
 
 async def admin_create_account(

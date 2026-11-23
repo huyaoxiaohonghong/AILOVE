@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from app.core.crypto import decrypt_secret, encrypt_secret, mask_api_key
 from app.core.exceptions import BusinessException
 from app.db.mysql import get_session_factory
 from app.db.redis import cache_delete, cache_get_json, cache_set_json
@@ -22,6 +23,7 @@ GROUP_LABELS: dict[str, str] = {
     "site": "站点与品牌",
     "security": "登录与会话安全",
     "registration": "注册与风控策略",
+    "email": "SMTP 邮件服务",
     "ai": "AI 对话策略",
     "log": "日志留存策略",
 }
@@ -36,6 +38,7 @@ class ConfigSpec:
     default: str
     description: str
     is_public: bool = False
+    is_secret: bool = False
     sort_order: int = 100
     min_val: float | None = None
     max_val: float | None = None
@@ -170,6 +173,104 @@ DEFAULT_CONFIG_SPECS: tuple[ConfigSpec, ...] = (
         is_public=True,
         sort_order=30,
     ),
+    ConfigSpec(
+        key="registration.email_verify_required",
+        group="registration",
+        label="开启注册邮箱验证码校验",
+        value_type="bool",
+        default="false",
+        description="开启后自助注册须先通过 SMTP 向目标邮箱发送并校验 6 位一次性验证码（需先启用 SMTP）",
+        is_public=True,
+        sort_order=40,
+    ),
+    # --- email ---
+    ConfigSpec(
+        key="email.smtp_enabled",
+        group="email",
+        label="启用 SMTP 邮件服务",
+        value_type="bool",
+        default="false",
+        description="开启后支持发送注册邮箱验证码及登录页「忘记密码」自助找回邮件",
+        is_public=True,
+        sort_order=10,
+    ),
+    ConfigSpec(
+        key="email.smtp_host",
+        group="email",
+        label="SMTP 服务器地址",
+        value_type="string",
+        default="",
+        description="发件服务器域名（如 smtp.qq.com、smtp.163.com 或企业邮箱 SMTP 地址）",
+        sort_order=20,
+    ),
+    ConfigSpec(
+        key="email.smtp_port",
+        group="email",
+        label="SMTP 端口",
+        value_type="int",
+        default="465",
+        description="常见端口：SSL 加密一般为 465，STARTTLS 为 587",
+        sort_order=30,
+        min_val=1,
+        max_val=65535,
+    ),
+    ConfigSpec(
+        key="email.smtp_security",
+        group="email",
+        label="SMTP 连接加密方式",
+        value_type="string",
+        default="ssl",
+        description="支持 ssl（推荐 465）、starttls（587）或 none（仅内网调试）",
+        sort_order=40,
+    ),
+    ConfigSpec(
+        key="email.smtp_username",
+        group="email",
+        label="SMTP 登录账号",
+        value_type="string",
+        default="",
+        description="发件邮箱登录用户名（通常为完整发件邮箱地址）",
+        sort_order=50,
+    ),
+    ConfigSpec(
+        key="email.smtp_password",
+        group="email",
+        label="SMTP 授权码 / 密码",
+        value_type="string",
+        default="",
+        description="使用 Fernet 对称加密落库保存；QQ/163 邮箱请填写客户端授权码，留空保存则保持原密钥不变",
+        is_secret=True,
+        sort_order=60,
+    ),
+    ConfigSpec(
+        key="email.from_email",
+        group="email",
+        label="发件人邮箱地址",
+        value_type="string",
+        default="",
+        description="展示给收件人的发件邮箱地址（留空则默认沿用 SMTP 登录账号）",
+        sort_order=70,
+    ),
+    ConfigSpec(
+        key="email.from_name",
+        group="email",
+        label="发件人显示名称",
+        value_type="string",
+        default="AILOVE 安全中心",
+        description="邮件客户端中显示的发件人署名名称",
+        sort_order=80,
+    ),
+    ConfigSpec(
+        key="email.code_expire_minutes",
+        group="email",
+        label="邮箱验证码有效时长（分钟）",
+        value_type="int",
+        default="10",
+        description="一次性 6 位数字验证码的有效期与 Redis 缓存时长（范围 3 ~ 30 分钟）",
+        sort_order=90,
+        min_val=3,
+        max_val=30,
+    ),
     # --- ai ---
     ConfigSpec(
         key="ai.inject_realtime_clock",
@@ -262,7 +363,7 @@ def _ensure_mem_seed() -> None:
                 "default_value": spec.default,
                 "description": spec.description,
                 "is_public": spec.is_public,
-                "is_secret": False,
+                "is_secret": spec.is_secret,
                 "sort_order": spec.sort_order,
                 "updated_at": now,
             }
@@ -335,6 +436,13 @@ def _serialize_and_validate(spec: ConfigSpec, new_value: Any) -> str:
     text = "" if new_value is None else str(new_value).strip()
     if len(text) > 1000:
         raise BusinessException(f"配置项「{spec.label}」内容过长（最多 1000 字符）", code=40073)
+    if spec.key == "email.smtp_security":
+        normalized = text.lower()
+        if normalized not in {"ssl", "starttls", "none"}:
+            raise BusinessException(
+                "SMTP 连接加密方式仅支持 ssl / starttls / none", code=40075
+            )
+        return normalized
     return text
 
 
@@ -363,13 +471,14 @@ async def ensure_default_sys_configs() -> None:
                             default_value=spec.default,
                             description=spec.description,
                             is_public=spec.is_public,
-                            is_secret=False,
+                            is_secret=spec.is_secret,
                             sort_order=spec.sort_order,
                         )
                     )
                     changed += 1
-                elif row.is_public != spec.is_public:
+                elif row.is_public != spec.is_public or row.is_secret != spec.is_secret:
                     row.is_public = spec.is_public
+                    row.is_secret = spec.is_secret
                     changed += 1
             if changed:
                 await session.commit()
@@ -438,13 +547,22 @@ async def get_str(key: str, default: str = "") -> str:
     return default if val is None else str(val)
 
 
+async def get_secret(key: str, default: str = "") -> str:
+    """读取 Fernet 加密配置并在内存中解密返回（缓存层永不存储明文密钥）。"""
+    raw = await get_str(key, default="")
+    if not raw:
+        return default
+    plain = decrypt_secret(raw)
+    return plain or default
+
+
 async def get_public_configs() -> dict[str, Any]:
     """返回登录页与公开端所需的非敏感运行时配置。"""
     cfg = await get_config_map()
     public_items = {
         spec.key: cfg.get(spec.key, _parse_typed_value(spec.default, spec.value_type))
         for spec in DEFAULT_CONFIG_SPECS
-        if spec.is_public
+        if spec.is_public and not spec.is_secret
     }
     return {
         "site_name": str(public_items.get("site.name", "AILOVE")),
@@ -453,6 +571,8 @@ async def get_public_configs() -> dict[str, Any]:
         "maintenance_mode": bool(public_items.get("site.maintenance_mode", False)),
         "registration_enabled": bool(public_items.get("registration.enabled", True)),
         "slider_captcha_enabled": bool(public_items.get("registration.slider_captcha_enabled", True)),
+        "email_verify_required": bool(public_items.get("registration.email_verify_required", False)),
+        "email_service_enabled": bool(public_items.get("email.smtp_enabled", False)),
         "password_min_length": int(public_items.get("security.password_min_length", 8)),
         "configs": public_items,
     }
@@ -468,18 +588,33 @@ def _build_item_dict(
     default_value: str,
     description: str,
     is_public: bool,
+    is_secret: bool,
     updated_at: datetime | None,
 ) -> dict[str, Any]:
     spec = _SPEC_MAP.get(key)
+    has_secret = bool(raw_value)
+    masked_value = ""
+    if is_secret:
+        plain = decrypt_secret(raw_value) if raw_value else ""
+        masked_value = mask_api_key(plain) if plain else ""
+        display_value: Any = ""
+        display_default: Any = ""
+    else:
+        display_value = _parse_typed_value(raw_value, value_type)
+        display_default = _parse_typed_value(default_value, value_type)
+
     return {
         "config_key": key,
         "group_name": group_name,
         "label": label,
         "value_type": value_type,
-        "value": _parse_typed_value(raw_value, value_type),
-        "default_value": _parse_typed_value(default_value, value_type),
+        "value": display_value,
+        "default_value": display_default,
         "description": description,
         "is_public": is_public,
+        "is_secret": is_secret,
+        "has_secret": has_secret if is_secret else False,
+        "masked_value": masked_value,
         "min_val": spec.min_val if spec else None,
         "max_val": spec.max_val if spec else None,
         "updated_at": updated_at.isoformat() if updated_at else None,
@@ -497,6 +632,7 @@ async def list_grouped_configs() -> dict[str, Any]:
                 )
             ).scalars().all()
             for r in rows:
+                spec = _SPEC_MAP.get(r.config_key)
                 rows_by_key[r.config_key] = _build_item_dict(
                     key=r.config_key,
                     group_name=r.group_name,
@@ -506,6 +642,7 @@ async def list_grouped_configs() -> dict[str, Any]:
                     default_value=r.default_value,
                     description=r.description,
                     is_public=r.is_public,
+                    is_secret=bool(r.is_secret or (spec.is_secret if spec else False)),
                     updated_at=r.updated_at,
                 )
     except (SQLAlchemyError, OSError):
@@ -514,6 +651,7 @@ async def list_grouped_configs() -> dict[str, Any]:
     if not rows_by_key:
         _ensure_mem_seed()
         for k, rec in _mem_sys_configs.items():
+            spec = _SPEC_MAP.get(k)
             rows_by_key[k] = _build_item_dict(
                 key=k,
                 group_name=rec["group_name"],
@@ -523,6 +661,7 @@ async def list_grouped_configs() -> dict[str, Any]:
                 default_value=rec["default_value"],
                 description=rec["description"],
                 is_public=rec["is_public"],
+                is_secret=bool(rec.get("is_secret") or (spec.is_secret if spec else False)),
                 updated_at=rec.get("updated_at"),
             )
 
@@ -544,7 +683,21 @@ async def batch_update_configs(updates: dict[str, Any], admin_id: int) -> dict[s
         spec = _SPEC_MAP.get(k)
         if spec is None:
             raise BusinessException(f"未知的系统配置项：{k}", code=40070)
-        validated[k] = _serialize_and_validate(spec, val)
+        if spec.is_secret:
+            raw_s = "" if val is None else str(val).strip()
+            if not raw_s:
+                continue
+            if raw_s == "__CLEAR__":
+                validated[k] = ""
+            else:
+                if len(raw_s) > 512:
+                    raise BusinessException(f"配置项「{spec.label}」过长（最多 512 字符）", code=40073)
+                validated[k] = encrypt_secret(raw_s)
+        else:
+            validated[k] = _serialize_and_validate(spec, val)
+
+    if not validated:
+        return await list_grouped_configs()
 
     try:
         factory = get_session_factory()
@@ -572,7 +725,7 @@ async def batch_update_configs(updates: dict[str, Any], admin_id: int) -> dict[s
                             default_value=spec.default,
                             description=spec.description,
                             is_public=spec.is_public,
-                            is_secret=False,
+                            is_secret=spec.is_secret,
                             sort_order=spec.sort_order,
                             updated_by=admin_id,
                         )
