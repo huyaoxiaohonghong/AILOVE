@@ -135,6 +135,7 @@ DEFAULT_CONFIG_SPECS: tuple[ConfigSpec, ...] = (
         value_type="int",
         default="8",
         description="注册、分配创建及修改密码时校验的最小字符数（范围 6 ~ 32，且须含字母和数字）",
+        is_public=True,
         sort_order=50,
         min_val=6,
         max_val=32,
@@ -324,12 +325,12 @@ async def ensure_default_sys_configs() -> None:
     try:
         factory = get_session_factory()
         async with factory() as session:
-            existing_keys = set(
-                (await session.execute(select(SysConfig.config_key))).scalars().all()
-            )
-            added = 0
+            existing_rows = (await session.execute(select(SysConfig))).scalars().all()
+            existing_map = {r.config_key: r for r in existing_rows}
+            changed = 0
             for spec in DEFAULT_CONFIG_SPECS:
-                if spec.key not in existing_keys:
+                row = existing_map.get(spec.key)
+                if row is None:
                     session.add(
                         SysConfig(
                             config_key=spec.key,
@@ -344,11 +345,14 @@ async def ensure_default_sys_configs() -> None:
                             sort_order=spec.sort_order,
                         )
                     )
-                    added += 1
-            if added:
+                    changed += 1
+                elif row.is_public != spec.is_public:
+                    row.is_public = spec.is_public
+                    changed += 1
+            if changed:
                 await session.commit()
                 await invalidate_sys_config_cache()
-                logger.info("Initialized %d default sys_configs items.", added)
+                logger.info("Synced %d default sys_configs items.", changed)
     except IntegrityError:
         logger.info("Default sys_configs already initialized by another worker.")
     except Exception as exc:
@@ -427,6 +431,7 @@ async def get_public_configs() -> dict[str, Any]:
         "maintenance_mode": bool(public_items.get("site.maintenance_mode", False)),
         "registration_enabled": bool(public_items.get("registration.enabled", True)),
         "slider_captcha_enabled": bool(public_items.get("registration.slider_captcha_enabled", True)),
+        "password_min_length": int(public_items.get("security.password_min_length", 8)),
         "configs": public_items,
     }
 

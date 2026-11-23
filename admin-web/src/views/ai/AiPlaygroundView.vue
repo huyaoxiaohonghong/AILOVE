@@ -1,12 +1,18 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  clearAiSession,
+  deleteAiConversation,
+  fetchAiConversations,
   fetchAvailableModels,
+  fetchConversationMessages,
+  renameAiConversation,
   sendAiChat,
   streamAiChat,
+  type AIConversationItem,
   type AvailableAIModel,
 } from '@/api/ai'
+import { decodeUtf8Base64, renderMarkdown } from '@/utils/markdown'
 
 interface ChatBubble {
   id: number
@@ -18,28 +24,40 @@ interface ChatBubble {
   isError?: boolean
 }
 
+const WELCOME_MSG: ChatBubble = {
+  id: 1,
+  role: 'assistant',
+  content:
+    '你好！这里是 **AILOVE LangChain 对话工作台**，支持持久化多会话切换、OpenAI / Anthropic 双协议引擎与完整 **Markdown** 代码高亮渲染。\n\n- 默认接入 `deepseek-flash` / `deepseek-v4-pro`\n- 自动注入实时系统时钟上下文\n- 支持思考链展示、停止生成、复制代码与重新生成',
+}
+
 const availableModels = ref<AvailableAIModel[]>([])
 const selectedConfigId = ref<number | undefined>(undefined)
+const conversations = ref<AIConversationItem[]>([])
+const conversationsLoading = ref(false)
+const sidebarVisible = ref(true)
+
 const sessionId = ref('')
 const inputText = ref('')
 const systemPrompt = ref('')
 const useStream = ref(true)
 const sending = ref(false)
+const loadingHistory = ref(false)
 let abortController: AbortController | null = null
-const messages = ref<ChatBubble[]>([
-  {
-    id: 1,
-    role: 'assistant',
-    content:
-      '你好！这里是 AILOVE LangChain 对话调试台，默认接入 DeepSeek（deepseek-flash / deepseek-v4-pro），同时支持 OpenAI 与 Anthropic 双协议、SSE 流式及深度思考链展示。',
-  },
-])
 
+const messages = ref<ChatBubble[]>([{ ...WELCOME_MSG }])
 const listRef = ref<HTMLElement | null>(null)
 
 const currentModel = computed(
   () => availableModels.value.find((m) => m.id === selectedConfigId.value) ?? null,
 )
+
+const lastAssistantIdx = computed(() => {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    if (messages.value[i]?.role === 'assistant') return i
+  }
+  return -1
+})
 
 async function loadModels() {
   try {
@@ -54,6 +72,91 @@ async function loadModels() {
   }
 }
 
+async function loadConversations() {
+  conversationsLoading.value = true
+  try {
+    const res = await fetchAiConversations()
+    conversations.value = res.items
+  } catch {
+    // 忽略
+  } finally {
+    conversationsLoading.value = false
+  }
+}
+
+async function selectConversation(conv: AIConversationItem) {
+  if (sending.value) return
+  loadingHistory.value = true
+  try {
+    const detail = await fetchConversationMessages(conv.session_id)
+    sessionId.value = detail.session_id
+    messages.value = detail.messages
+      .filter((m) => m.role === 'user' || m.role === 'assistant')
+      .map((m, idx) => ({
+        id: m.id ?? idx + 1,
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+        modelLabel: m.role === 'assistant' ? detail.model_name || 'AI' : undefined,
+        tokenUsage: m.token_usage || undefined,
+      }))
+    if (messages.value.length === 0) {
+      messages.value = [{ ...WELCOME_MSG }]
+    }
+    await scrollToBottom()
+  } finally {
+    loadingHistory.value = false
+  }
+}
+
+function handleNewConversation() {
+  if (sending.value) {
+    abortController?.abort()
+  }
+  sessionId.value = ''
+  messages.value = [
+    {
+      id: Date.now(),
+      role: 'assistant',
+      content: '已开启全新会话，请输入你想探索或提问的内容。',
+    },
+  ]
+}
+
+async function handleRenameConversation(conv: AIConversationItem) {
+  try {
+    const { value } = await ElMessageBox.prompt('请输入新的会话标题', '重命名会话', {
+      inputValue: conv.title,
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+      inputPattern: /^.{1,120}$/,
+      inputErrorMessage: '标题长度须为 1~120 字符',
+    })
+    const res = await renameAiConversation(conv.session_id, value)
+    conv.title = res.title
+    ElMessage.success('会话标题已更新')
+  } catch {
+    // 取消
+  }
+}
+
+async function handleDeleteConversation(conv: AIConversationItem) {
+  try {
+    await ElMessageBox.confirm(`确认删除历史会话「${conv.title}」？删除后不可恢复。`, '删除确认', {
+      confirmButtonText: '确认删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+    await deleteAiConversation(conv.session_id)
+    ElMessage.success('会话已删除')
+    if (sessionId.value === conv.session_id) {
+      handleNewConversation()
+    }
+    await loadConversations()
+  } catch {
+    // 取消
+  }
+}
+
 async function scrollToBottom() {
   await nextTick()
   if (listRef.value) {
@@ -61,14 +164,13 @@ async function scrollToBottom() {
   }
 }
 
-async function handleSend() {
-  const text = inputText.value.trim()
+async function sendPromptText(text: string, appendUserBubble = true) {
   if (!text || sending.value) return
-
-  inputText.value = ''
   sending.value = true
 
-  messages.value.push({ id: Date.now(), role: 'user', content: text })
+  if (appendUserBubble) {
+    messages.value.push({ id: Date.now(), role: 'user', content: text })
+  }
   const assistantMsg: ChatBubble = {
     id: Date.now() + 1,
     role: 'assistant',
@@ -131,6 +233,7 @@ async function handleSend() {
       assistantMsg.modelLabel = `${res.config_name || 'AI'} (${res.model})${res.is_mock ? ' · 演示' : ''}`
       await scrollToBottom()
     }
+    void loadConversations()
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
       assistantMsg.content = assistantMsg.content
@@ -146,26 +249,61 @@ async function handleSend() {
   }
 }
 
+async function handleSend() {
+  const text = inputText.value.trim()
+  if (!text || sending.value) return
+  inputText.value = ''
+  await sendPromptText(text, true)
+}
+
+async function handleRegenerate() {
+  if (sending.value) return
+  let lastUserText = ''
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const item = messages.value[i]
+    if (item?.role === 'user') {
+      lastUserText = item.content
+      break
+    }
+  }
+  if (!lastUserText) return
+  if (lastAssistantIdx.value >= 0) {
+    messages.value.splice(lastAssistantIdx.value, 1)
+  }
+  await sendPromptText(lastUserText, false)
+}
+
 function handleStop() {
   abortController?.abort()
 }
 
-async function handleClear() {
-  if (sessionId.value) {
-    await clearAiSession(sessionId.value)
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('已复制到剪贴板')
+  } catch {
+    ElMessage.warning('当前浏览器环境不支持自动写入剪贴板')
   }
-  sessionId.value = ''
-  messages.value = [
-    {
-      id: Date.now(),
-      role: 'assistant',
-      content: '已开启全新会话，请输入你想测试的 Prompt。',
-    },
-  ]
+}
+
+function handleMessageAreaClick(event: MouseEvent) {
+  const target = event.target as HTMLElement | null
+  const btn = target?.closest('.md-copy-btn') as HTMLButtonElement | null
+  if (!btn) return
+  const b64 = btn.getAttribute('data-copy-b64') || ''
+  const code = decodeUtf8Base64(b64)
+  if (code) {
+    void copyText(code).then(() => {
+      btn.textContent = '已复制'
+      setTimeout(() => {
+        btn.textContent = '复制代码'
+      }, 1500)
+    })
+  }
 }
 
 onMounted(() => {
-  void loadModels()
+  void Promise.all([loadModels(), loadConversations()])
 })
 
 onBeforeUnmount(() => {
@@ -177,12 +315,15 @@ onBeforeUnmount(() => {
   <div>
     <div class="page-header">
       <div>
-        <h2 class="page-title">LangChain AI 调试台</h2>
+        <h2 class="page-title">LangChain AI 工作台</h2>
         <p class="page-subtitle">
-          直接切换已配置的 DeepSeek (deepseek-flash / deepseek-v4-pro) 模型与 OpenAI / Anthropic 协议，支持 SSE 流式与深度思考链
+          持久化多会话管理 + Markdown 代码高亮排版，实时切换 DeepSeek 双协议引擎与思考链流
         </p>
       </div>
       <div class="toolbar-actions">
+        <el-button plain size="small" @click="sidebarVisible = !sidebarVisible">
+          {{ sidebarVisible ? '收起历史栏' : '展开历史栏' }}
+        </el-button>
         <el-select
           v-model="selectedConfigId"
           placeholder="选择模型配置"
@@ -207,63 +348,138 @@ onBeforeUnmount(() => {
           </el-option>
         </el-select>
         <el-switch v-model="useStream" active-text="SSE 流式" inactive-text="同步" />
-        <el-button @click="handleClear">清空会话</el-button>
+        <el-button type="primary" plain icon="Plus" @click="handleNewConversation">新建对话</el-button>
       </div>
     </div>
 
-    <div class="page-card playground-card">
-      <div class="prompt-row">
-        <el-input
-          v-model="systemPrompt"
-          placeholder="可选：临时覆盖 System Prompt（留空自动采用所选模型配置中的默认人设）"
-          clearable
-        >
-          <template #prepend>System Prompt</template>
-        </el-input>
-        <el-tag v-if="sessionId" type="info" effect="plain" class="mono-num">
-          SID: {{ sessionId.slice(0, 10) }}
-        </el-tag>
-      </div>
-
-      <div ref="listRef" class="message-list">
-        <div
-          v-for="msg in messages"
-          :key="msg.id"
-          class="message-row"
-          :class="msg.role === 'user' ? 'is-user' : 'is-assistant'"
-        >
-          <div class="bubble">
-            <div class="bubble-role">
-              {{ msg.role === 'user' ? '我' : msg.modelLabel || 'AILOVE Assistant' }}
+    <div class="workbench-shell">
+      <!-- 左侧历史会话栏 -->
+      <aside v-show="sidebarVisible" v-loading="conversationsLoading" class="page-card history-pane">
+        <div class="history-head">
+          <span>历史会话 ({{ conversations.length }})</span>
+          <el-button link type="primary" size="small" icon="Refresh" @click="loadConversations" />
+        </div>
+        <div v-if="conversations.length === 0" class="history-empty">
+          暂无历史会话，发起第一轮对话后将自动持久保存
+        </div>
+        <div v-else class="history-list">
+          <div
+            v-for="conv in conversations"
+            :key="conv.session_id"
+            class="history-item"
+            :class="{ 'is-active': sessionId === conv.session_id }"
+            @click="selectConversation(conv)"
+          >
+            <div class="history-title" :title="conv.title">{{ conv.title }}</div>
+            <div class="history-meta">
+              <span class="mono-num history-model">{{ conv.model_name || 'AI' }}</span>
+              <span class="history-ops" @click.stop>
+                <el-button
+                  link
+                  size="small"
+                  type="primary"
+                  @click="handleRenameConversation(conv)"
+                >
+                  改名
+                </el-button>
+                <el-button
+                  link
+                  size="small"
+                  type="danger"
+                  @click="handleDeleteConversation(conv)"
+                >
+                  删
+                </el-button>
+              </span>
             </div>
-            <details v-if="msg.reasoning" class="reasoning-box" open>
-              <summary>深度思考过程 (Reasoning)</summary>
-              <div class="reasoning-text">{{ msg.reasoning }}</div>
-            </details>
-            <div class="bubble-text" :class="{ 'is-error': msg.isError }">
-              {{ msg.content || (msg.reasoning ? '正在整理最终回答...' : '正在思考...') }}
-            </div>
-            <div v-if="msg.tokenUsage" class="bubble-meta mono-num">Tokens · {{ msg.tokenUsage }}</div>
           </div>
         </div>
-      </div>
+      </aside>
 
-      <div class="composer">
-        <el-input
-          v-model="inputText"
-          type="textarea"
-          :rows="2"
-          resize="none"
-          placeholder="输入消息，按 Ctrl/Cmd + Enter 快速发送"
-          @keydown.ctrl.enter.prevent="handleSend"
-          @keydown.meta.enter.prevent="handleSend"
-        />
-        <el-button v-if="sending && useStream" class="send-btn" @click="handleStop">
-          停止生成
-        </el-button>
-        <el-button v-else type="primary" :loading="sending" class="send-btn" @click="handleSend">
-          发送
-        </el-button>
+      <!-- 右侧对话主工作台 -->
+      <div v-loading="loadingHistory" class="page-card playground-card">
+        <div class="prompt-row">
+          <el-input
+            v-model="systemPrompt"
+            placeholder="可选：临时覆盖 System Prompt（留空自动采用所选模型配置中的默认人设）"
+            clearable
+          >
+            <template #prepend>System Prompt</template>
+          </el-input>
+          <el-tag v-if="sessionId" type="info" effect="plain" class="mono-num">
+            SID: {{ sessionId.slice(0, 10) }}
+          </el-tag>
+        </div>
+
+        <div ref="listRef" class="message-list" @click="handleMessageAreaClick">
+          <div
+            v-for="(msg, idx) in messages"
+            :key="msg.id"
+            class="message-row"
+            :class="msg.role === 'user' ? 'is-user' : 'is-assistant'"
+          >
+            <div class="bubble">
+              <div class="bubble-role">
+                {{ msg.role === 'user' ? '我' : msg.modelLabel || 'AILOVE Assistant' }}
+              </div>
+              <details v-if="msg.reasoning" class="reasoning-box" open>
+                <summary>深度思考过程 (Reasoning)</summary>
+                <div class="reasoning-text">{{ msg.reasoning }}</div>
+              </details>
+
+              <div v-if="msg.role === 'user'" class="bubble-plain">{{ msg.content }}</div>
+              <div
+                v-else-if="msg.isError || !msg.content"
+                class="bubble-plain"
+                :class="{ 'is-error': msg.isError }"
+              >
+                {{ msg.content || (msg.reasoning ? '正在整理最终回答...' : '正在思考...') }}
+              </div>
+              <div
+                v-else
+                class="markdown-body"
+                v-html="renderMarkdown(msg.content)"
+              />
+
+              <div v-if="msg.role === 'assistant' && msg.content" class="bubble-actions">
+                <span v-if="msg.tokenUsage" class="bubble-token mono-num">
+                  Tokens · {{ msg.tokenUsage }}
+                </span>
+                <div class="bubble-btns">
+                  <button type="button" class="mini-action-btn" @click="copyText(msg.content)">
+                    复制全文
+                  </button>
+                  <button
+                    v-if="idx === lastAssistantIdx && idx > 0 && !sending"
+                    type="button"
+                    class="mini-action-btn"
+                    @click="handleRegenerate"
+                  >
+                    重新生成
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <el-input
+            v-model="inputText"
+            type="textarea"
+            :rows="2"
+            resize="none"
+            placeholder="输入消息，按 Ctrl/Cmd + Enter 快速发送"
+            @keydown.ctrl.enter.prevent="handleSend"
+            @keydown.meta.enter.prevent="handleSend"
+          />
+          <el-button v-if="sending && useStream" class="send-btn" @click="handleStop">
+            停止生成
+          </el-button>
+          <el-button v-else type="primary" :loading="sending" class="send-btn" @click="handleSend">
+            发送
+          </el-button>
+        </div>
       </div>
     </div>
   </div>
@@ -284,18 +500,111 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-.playground-card {
+.workbench-shell {
+  display: flex;
+  gap: 16px;
+  height: calc(100vh - 196px);
+  min-height: 500px;
+}
+
+.history-pane {
+  width: 248px;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 196px);
-  min-height: 480px;
+  padding: 14px;
+  overflow: hidden;
+}
+
+.history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ailove-ink-primary);
+  margin-bottom: 10px;
+}
+
+.history-empty {
+  font-size: 12.5px;
+  color: var(--ailove-ink-muted);
+  line-height: 1.6;
+  padding: 20px 6px;
+  text-align: center;
+}
+
+.history-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.history-item {
+  padding: 10px 11px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: var(--ailove-subtle);
+  cursor: pointer;
+  transition: all 0.15s var(--ailove-ease);
+}
+
+.history-item:hover {
+  border-color: var(--ailove-brand-200);
+}
+
+.history-item.is-active {
+  background: var(--ailove-brand-50);
+  border-color: var(--ailove-brand-200);
+}
+
+.history-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ailove-ink-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-meta {
+  margin-top: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.history-model {
+  font-size: 11px;
+  color: var(--ailove-ink-muted);
+}
+
+.history-ops {
+  opacity: 0;
+  transition: opacity 0.14s;
+}
+
+.history-item:hover .history-ops,
+.history-item.is-active .history-ops {
+  opacity: 1;
+}
+
+.playground-card {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 .prompt-row {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .message-list {
@@ -319,7 +628,7 @@ onBeforeUnmount(() => {
 }
 
 .bubble {
-  max-width: 78%;
+  max-width: 82%;
   padding: 13px 16px;
   border-radius: 14px;
   background: #ffffff;
@@ -338,7 +647,7 @@ onBeforeUnmount(() => {
   font-size: 11px;
   font-weight: 600;
   opacity: 0.72;
-  margin-bottom: 5px;
+  margin-bottom: 6px;
 }
 
 .reasoning-box {
@@ -363,25 +672,199 @@ onBeforeUnmount(() => {
   line-height: 1.6;
 }
 
-.bubble-text {
+.bubble-plain {
   font-size: 14px;
   line-height: 1.65;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-.bubble-text.is-error {
+.bubble-plain.is-error {
   color: var(--el-color-danger);
 }
 
-.bubble-meta {
-  margin-top: 6px;
+.bubble-actions {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--ailove-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.bubble-token {
   font-size: 11px;
   color: var(--ailove-ink-muted);
 }
 
+.bubble-btns {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.mini-action-btn {
+  border: none;
+  background: transparent;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: var(--ailove-ink-muted);
+  cursor: pointer;
+  transition: all 0.14s;
+}
+
+.mini-action-btn:hover {
+  background: var(--ailove-subtle);
+  color: var(--ailove-brand-600);
+}
+
+/* Markdown 富文本排版样式 */
+.markdown-body {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--ailove-ink-primary);
+  word-break: break-word;
+}
+
+.markdown-body :deep(.md-p) {
+  margin: 0 0 8px;
+}
+
+.markdown-body :deep(.md-p:last-child) {
+  margin-bottom: 0;
+}
+
+.markdown-body :deep(.md-h) {
+  margin: 12px 0 6px;
+  font-family: var(--ailove-font-display);
+  font-weight: 700;
+  color: var(--ailove-ink-primary);
+}
+
+.markdown-body :deep(.md-h1) {
+  font-size: 18px;
+}
+.markdown-body :deep(.md-h2) {
+  font-size: 16px;
+}
+.markdown-body :deep(.md-h3),
+.markdown-body :deep(.md-h4) {
+  font-size: 14.5px;
+}
+
+.markdown-body :deep(.md-list) {
+  margin: 6px 0 8px;
+  padding-left: 20px;
+}
+
+.markdown-body :deep(.md-list li) {
+  margin: 3px 0;
+}
+
+.markdown-body :deep(.md-quote) {
+  margin: 8px 0;
+  padding: 6px 12px;
+  border-left: 3px solid var(--ailove-brand-400);
+  background: var(--ailove-subtle);
+  border-radius: 0 8px 8px 0;
+  color: var(--ailove-ink-secondary);
+}
+
+.markdown-body :deep(.md-hr) {
+  border: none;
+  border-top: 1px solid var(--ailove-border);
+  margin: 12px 0;
+}
+
+.markdown-body :deep(.md-inline-code) {
+  font-family: var(--ailove-font-mono);
+  font-size: 12.5px;
+  background: rgba(200, 53, 83, 0.08);
+  color: #b52c49;
+  padding: 1px 6px;
+  border-radius: 5px;
+}
+
+.markdown-body :deep(.md-code-block) {
+  margin: 8px 0;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(26, 22, 29, 0.14);
+  background: #1d1922;
+}
+
+.markdown-body :deep(.md-code-head) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: #27222d;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.markdown-body :deep(.md-code-lang) {
+  font-family: var(--ailove-font-mono);
+  font-size: 11px;
+  color: #c7bfd0;
+  text-transform: lowercase;
+}
+
+.markdown-body :deep(.md-copy-btn) {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: transparent;
+  color: #e6e0ec;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.markdown-body :deep(.md-copy-btn:hover) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.markdown-body :deep(.md-pre) {
+  margin: 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  font-family: var(--ailove-font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #f3eff7;
+}
+
+.markdown-body :deep(.md-table-wrap) {
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+.markdown-body :deep(.md-table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.markdown-body :deep(.md-table th),
+.markdown-body :deep(.md-table td) {
+  border: 1px solid var(--ailove-border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.markdown-body :deep(.md-table th) {
+  background: var(--ailove-subtle);
+  font-weight: 600;
+}
+
+.markdown-body :deep(.md-link) {
+  color: var(--ailove-brand-600);
+  text-decoration: underline;
+}
+
 .composer {
-  margin-top: 16px;
+  margin-top: 14px;
   display: flex;
   gap: 12px;
   align-items: stretch;
@@ -391,5 +874,11 @@ onBeforeUnmount(() => {
   width: 96px;
   height: auto;
   border-radius: 10px;
+}
+
+@media (max-width: 900px) {
+  .history-pane {
+    display: none;
+  }
 }
 </style>

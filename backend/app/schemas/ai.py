@@ -38,6 +38,10 @@ class ChatMessageItem(BaseModel):
     content: str
 
 
+class ConversationRenameRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=120, description="新的会话标题")
+
+
 class AIModelConfigCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=64, description="配置名称")
     provider: str = Field(default="deepseek", min_length=2, max_length=32, description="提供商标识")

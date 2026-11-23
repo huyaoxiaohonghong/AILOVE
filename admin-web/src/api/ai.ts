@@ -97,6 +97,22 @@ export interface AiChatResult {
   token_usage: number
 }
 
+export interface AIConversationItem {
+  session_id: string
+  title: string
+  model_name: string
+  created_at: string
+  updated_at: string
+}
+
+export interface AIConversationMessage {
+  id?: number
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  token_usage?: number
+  created_at?: string
+}
+
 // --- 管理端 AI 模型配置 API ---
 export function fetchAiProviders() {
   return request<{ items: AIProviderInfo[] }>({
@@ -201,6 +217,40 @@ export function sendAiChat(data: AiChatPayload) {
 export function clearAiSession(sessionId: string) {
   return request<{ session_id: string; cleared: boolean }>({
     url: `/ai/sessions/${encodeURIComponent(sessionId)}`,
+    method: 'delete',
+  })
+}
+
+export function fetchAiConversations() {
+  return request<{ items: AIConversationItem[] }>({
+    url: '/ai/conversations',
+    method: 'get',
+  })
+}
+
+export function fetchConversationMessages(sessionId: string) {
+  return request<{
+    session_id: string
+    title: string
+    model_name: string
+    messages: AIConversationMessage[]
+  }>({
+    url: `/ai/conversations/${encodeURIComponent(sessionId)}/messages`,
+    method: 'get',
+  })
+}
+
+export function renameAiConversation(sessionId: string, title: string) {
+  return request<{ session_id: string; title: string; model_name: string }>({
+    url: `/ai/conversations/${encodeURIComponent(sessionId)}`,
+    method: 'patch',
+    data: { title },
+  })
+}
+
+export function deleteAiConversation(sessionId: string) {
+  return request<{ session_id: string; deleted: boolean }>({
+    url: `/ai/conversations/${encodeURIComponent(sessionId)}`,
     method: 'delete',
   })
 }

@@ -18,6 +18,7 @@ const appStore = useAppStore()
 const authStore = useAuthStore()
 
 const publicCfg = computed(() => appStore.publicConfig)
+const passwordMinLength = computed(() => Math.max(6, publicCfg.value.password_min_length || 8))
 const registrationAllowed = computed(
   () => publicCfg.value.registration_enabled && !publicCfg.value.maintenance_mode,
 )
@@ -52,11 +53,15 @@ const registerForm = reactive({
   confirmPassword: '',
 })
 
-const registerRules: FormRules = {
+const registerRules = computed<FormRules>(() => ({
   email: [{ required: true, message: '请输入正规公共邮箱地址', trigger: 'blur' }],
   password: [
     { required: true, message: '请设置登录密码', trigger: 'blur' },
-    { min: 8, message: '密码长度至少为 8 位', trigger: 'blur' },
+    {
+      min: passwordMinLength.value,
+      message: `密码长度至少为 ${passwordMinLength.value} 位`,
+      trigger: 'blur',
+    },
     {
       validator: (_rule, value: string, callback) => {
         if (value && (!/[A-Za-z]/.test(value) || !/\d/.test(value))) {
@@ -81,7 +86,7 @@ const registerRules: FormRules = {
       trigger: 'blur',
     },
   ],
-}
+}))
 
 const trustPillars = [
   {
@@ -409,7 +414,7 @@ function fillDefaultAdmin() {
                   v-model="registerForm.password"
                   type="password"
                   show-password
-                  placeholder="至少 8 位含字母数字"
+                  :placeholder="`至少 ${passwordMinLength} 位含字母数字`"
                   prefix-icon="Lock"
                 />
               </el-form-item>

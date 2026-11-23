@@ -5,12 +5,12 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.exceptions import BusinessException
@@ -29,8 +29,9 @@ from app.services.ai_providers import (
 
 logger = logging.getLogger(__name__)
 
-# 当 Redis 未启动时，使用进程内内存字典降级保存多轮上下文（仅开发调试）
+# 当 Redis / MySQL 未启动时，使用进程内内存字典降级保存多轮上下文与会话列表（仅开发调试）
 _fallback_memory: dict[str, list[dict[str, str]]] = {}
+_mem_conversations: dict[str, dict[str, Any]] = {}
 _SESSION_TTL_SECONDS = 86400
 _WEEKDAYS_ZH = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
 _BEIJING_TZ = timezone(timedelta(hours=8))
@@ -150,7 +151,10 @@ class LLMService:
         assistant_content: str,
         token_usage: int = 0,
     ) -> None:
-        """将会话与问答消息异步持久化到 MySQL（MySQL 不可用时静默跳过不影响对话）。"""
+        """将会话与问答消息持久化到 MySQL（MySQL 不可用时降级保存至内存会话仓库）。"""
+        now = datetime.now(UTC).replace(tzinfo=None)
+        utype = (user_type or "web")[:16]
+        uid = int(user_id or 0)
         try:
             factory = get_session_factory()
             async with factory() as session:
@@ -162,15 +166,18 @@ class LLMService:
                 if conv is None:
                     conv = AIConversation(
                         session_id=session_id,
-                        user_type=user_type[:16],
-                        user_id=user_id,
+                        user_type=utype,
+                        user_id=uid,
                         title=user_content.strip()[:60] or "新对话",
                         model_name=model_name[:64],
                     )
                     session.add(conv)
                     await session.flush()
+                elif conv.user_id != uid or conv.user_type != utype:
+                    return
                 else:
                     conv.model_name = model_name[:64]
+                    conv.updated_at = now
 
                 session.add(
                     DBAIMessage(
@@ -190,7 +197,223 @@ class LLMService:
                 )
                 await session.commit()
         except (SQLAlchemyError, OSError) as exc:
-            logger.debug("Skip AI chat DB persistence: %s", exc)
+            logger.debug("AI chat DB persistence fallback to mem: %s", exc)
+            mem_key = f"{build_owner_scope(utype, uid)}:{session_id}"
+            now_iso = datetime.now(UTC).isoformat()
+            rec = _mem_conversations.get(mem_key)
+            if rec is None:
+                rec = {
+                    "session_id": session_id,
+                    "user_type": utype,
+                    "user_id": uid,
+                    "title": user_content.strip()[:60] or "新对话",
+                    "model_name": model_name[:64],
+                    "messages": [],
+                    "created_at": now_iso,
+                    "updated_at": now_iso,
+                }
+                _mem_conversations[mem_key] = rec
+            else:
+                rec["model_name"] = model_name[:64]
+                rec["updated_at"] = now_iso
+            rec["messages"].append(
+                {
+                    "role": "user",
+                    "content": user_content,
+                    "token_usage": 0,
+                    "created_at": now_iso,
+                }
+            )
+            rec["messages"].append(
+                {
+                    "role": "assistant",
+                    "content": assistant_content,
+                    "token_usage": token_usage,
+                    "created_at": now_iso,
+                }
+            )
+
+    async def list_conversations(
+        self, user_type: str, user_id: int, limit: int = 30
+    ) -> list[dict[str, Any]]:
+        """列出当前用户本人的 AI 历史会话（按最近活跃倒序）。"""
+        utype = (user_type or "web")[:16]
+        uid = int(user_id or 0)
+        try:
+            factory = get_session_factory()
+            async with factory() as session:
+                stmt = (
+                    select(AIConversation)
+                    .where(
+                        AIConversation.user_type == utype,
+                        AIConversation.user_id == uid,
+                    )
+                    .order_by(desc(AIConversation.updated_at), desc(AIConversation.id))
+                    .limit(limit)
+                )
+                rows = (await session.execute(stmt)).scalars().all()
+                return [
+                    {
+                        "session_id": r.session_id,
+                        "title": r.title,
+                        "model_name": r.model_name,
+                        "created_at": r.created_at.isoformat() if r.created_at else "",
+                        "updated_at": r.updated_at.isoformat() if r.updated_at else "",
+                    }
+                    for r in rows
+                ]
+        except (SQLAlchemyError, OSError):
+            items = [
+                {
+                    "session_id": rec["session_id"],
+                    "title": rec["title"],
+                    "model_name": rec["model_name"],
+                    "created_at": rec["created_at"],
+                    "updated_at": rec["updated_at"],
+                }
+                for rec in _mem_conversations.values()
+                if rec["user_type"] == utype and rec["user_id"] == uid
+            ]
+            items.sort(key=lambda x: x["updated_at"], reverse=True)
+            return items[:limit]
+
+    async def get_conversation_messages(
+        self, session_id: str, user_type: str, user_id: int
+    ) -> dict[str, Any] | None:
+        """获取指定会话全部消息，并自动预热 Redis 短期多轮上下文缓存。"""
+        utype = (user_type or "web")[:16]
+        uid = int(user_id or 0)
+        owner = build_owner_scope(utype, uid)
+        try:
+            factory = get_session_factory()
+            async with factory() as session:
+                conv = (
+                    await session.execute(
+                        select(AIConversation).where(
+                            AIConversation.session_id == session_id,
+                            AIConversation.user_type == utype,
+                            AIConversation.user_id == uid,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if conv is None:
+                    return None
+                msgs = (
+                    await session.execute(
+                        select(DBAIMessage)
+                        .where(DBAIMessage.conversation_id == conv.id)
+                        .order_by(DBAIMessage.id.asc())
+                    )
+                ).scalars().all()
+                msg_list = [
+                    {
+                        "id": m.id,
+                        "role": m.role,
+                        "content": m.content,
+                        "token_usage": m.token_usage,
+                        "created_at": m.created_at.isoformat() if m.created_at else "",
+                    }
+                    for m in msgs
+                ]
+                await self.save_history(
+                    session_id,
+                    [{"role": m.role, "content": m.content} for m in msgs[-20:]],
+                    owner,
+                )
+                return {
+                    "session_id": conv.session_id,
+                    "title": conv.title,
+                    "model_name": conv.model_name,
+                    "messages": msg_list,
+                }
+        except (SQLAlchemyError, OSError):
+            mem_key = f"{owner}:{session_id}"
+            rec = _mem_conversations.get(mem_key)
+            if rec is None:
+                return None
+            msgs = rec["messages"]
+            await self.save_history(
+                session_id,
+                [{"role": m["role"], "content": m["content"]} for m in msgs[-20:]],
+                owner,
+            )
+            return {
+                "session_id": rec["session_id"],
+                "title": rec["title"],
+                "model_name": rec["model_name"],
+                "messages": list(msgs),
+            }
+
+    async def rename_conversation(
+        self, session_id: str, user_type: str, user_id: int, title: str
+    ) -> dict[str, Any] | None:
+        utype = (user_type or "web")[:16]
+        uid = int(user_id or 0)
+        clean_title = title.strip()[:120] or "新对话"
+        try:
+            factory = get_session_factory()
+            async with factory() as session:
+                conv = (
+                    await session.execute(
+                        select(AIConversation).where(
+                            AIConversation.session_id == session_id,
+                            AIConversation.user_type == utype,
+                            AIConversation.user_id == uid,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if conv is None:
+                    return None
+                conv.title = clean_title
+                await session.commit()
+                return {
+                    "session_id": conv.session_id,
+                    "title": conv.title,
+                    "model_name": conv.model_name,
+                }
+        except (SQLAlchemyError, OSError):
+            mem_key = f"{build_owner_scope(utype, uid)}:{session_id}"
+            rec = _mem_conversations.get(mem_key)
+            if rec is None:
+                return None
+            rec["title"] = clean_title
+            rec["updated_at"] = datetime.now(UTC).isoformat()
+            return {
+                "session_id": rec["session_id"],
+                "title": rec["title"],
+                "model_name": rec["model_name"],
+            }
+
+    async def delete_conversation(
+        self, session_id: str, user_type: str, user_id: int
+    ) -> bool:
+        utype = (user_type or "web")[:16]
+        uid = int(user_id or 0)
+        owner = build_owner_scope(utype, uid)
+        deleted = False
+        try:
+            factory = get_session_factory()
+            async with factory() as session:
+                conv = (
+                    await session.execute(
+                        select(AIConversation).where(
+                            AIConversation.session_id == session_id,
+                            AIConversation.user_type == utype,
+                            AIConversation.user_id == uid,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if conv is None:
+                    return False
+                await session.delete(conv)
+                await session.commit()
+                deleted = True
+        except (SQLAlchemyError, OSError):
+            mem_key = f"{owner}:{session_id}"
+            deleted = _mem_conversations.pop(mem_key, None) is not None
+
+        await self.clear_history(session_id, owner)
+        return deleted
 
     def _extract_token_usage(self, msg: Any) -> int:
         usage = getattr(msg, "usage_metadata", None)

@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   fetchWechatUsers,
   updateWechatUserStatus,
   type WechatUserItem,
 } from '@/api/users'
+import { useAuthStore } from '@/stores/auth'
+
+const authStore = useAuthStore()
+const canManage = computed(() => authStore.hasPermission('miniapp_user:manage'))
 
 const loading = ref(false)
 const dbConnected = ref(true)
@@ -73,6 +77,15 @@ onMounted(() => {
       style="margin-bottom: 16px"
     />
 
+    <el-alert
+      v-if="!canManage"
+      title="当前账号仅拥有「小程序用户查看」权限，启停操作按钮已隐藏。"
+      type="info"
+      show-icon
+      :closable="false"
+      style="margin-bottom: 16px"
+    />
+
     <div class="page-card">
       <el-form :inline="true" :model="query" class="search-bar">
         <el-form-item label="关键字">
@@ -112,7 +125,7 @@ onMounted(() => {
         <el-table-column prop="last_login_at" label="最后登录时间" width="180">
           <template #default="{ row }">{{ row.last_login_at || '-' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="120" fixed="right">
+        <el-table-column v-if="canManage" label="操作" width="120" fixed="right">
           <template #default="{ row }">
             <el-button
               link

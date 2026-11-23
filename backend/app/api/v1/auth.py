@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Request, status
 from app.api.deps import get_current_web_user
 from app.core.config import get_settings
 from app.core.exceptions import BusinessException
+from app.core.rate_limit import rate_limit
 from app.schemas.auth import (
     AccountLoginRequest,
     ChangePasswordRequest,
@@ -36,7 +37,11 @@ def _extract_client_meta(request: Request) -> tuple[str, str]:
     return ip, ua
 
 
-@router.post("/check-email", summary="实时检测邮箱是否符合正规邮箱注册风控策略")
+@router.post(
+    "/check-email",
+    summary="实时检测邮箱是否符合正规邮箱注册风控策略",
+    dependencies=[Depends(rate_limit("check_email", limit=40, window_seconds=60))],
+)
 async def check_email_policy(req: EmailCheckRequest):
     analysis = await email_trust_analyzer.analyze(
         req.email, check_mx=True, strict_registration=True
@@ -44,7 +49,11 @@ async def check_email_policy(req: EmailCheckRequest):
     return ok(analysis.to_dict())
 
 
-@router.post("/register", summary="用户邮箱自助注册（需滑动验证 + 正规邮箱算法校验）")
+@router.post(
+    "/register",
+    summary="用户邮箱自助注册（需滑动验证 + 正规邮箱算法校验）",
+    dependencies=[Depends(rate_limit("register", limit=20, window_seconds=60))],
+)
 async def register_by_email(req: EmailRegisterRequest, request: Request):
     ip, ua = _extract_client_meta(request)
     result = await register_user_by_email(req, client_ip=ip, user_agent=ua)

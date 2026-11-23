@@ -14,8 +14,11 @@ import {
   type AIProtocol,
   type AIProviderInfo,
 } from '@/api/ai'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const authStore = useAuthStore()
+const canManage = computed(() => authStore.hasPermission('ai:config:manage'))
 
 const loading = ref(false)
 const providers = ref<AIProviderInfo[]>([])
@@ -255,11 +258,25 @@ onMounted(() => {
         <el-button plain icon="ChatDotRound" @click="router.push('/ai-playground')">
           打开 AI 调试台
         </el-button>
-        <el-button type="primary" icon="Plus" @click="openCreateDialog('deepseek-flash', 'openai')">
+        <el-button
+          v-if="canManage"
+          type="primary"
+          icon="Plus"
+          @click="openCreateDialog('deepseek-flash', 'openai')"
+        >
           新增 DeepSeek 配置
         </el-button>
       </div>
     </div>
+
+    <el-alert
+      v-if="!canManage"
+      title="当前账号仅拥有「AI 模型配置查看」权限，新增、编辑、测速与切换默认模型已锁定。"
+      type="info"
+      show-icon
+      :closable="false"
+      style="margin-bottom: 16px"
+    />
 
     <!-- 当前生效默认引擎横幅 -->
     <div v-if="defaultConfig" class="active-engine-banner">
@@ -300,7 +317,7 @@ onMounted(() => {
         </div>
       </div>
 
-      <div class="engine-actions">
+      <div v-if="canManage" class="engine-actions">
         <el-button
           plain
           :loading="testingId === defaultConfig.id"
@@ -336,15 +353,20 @@ onMounted(() => {
             <span>Anthropic: {{ p.protocol_endpoints.anthropic }}</span>
           </div>
           <div class="prov-models">
-            <el-button
-              v-for="m in p.models"
-              :key="m.id"
-              size="small"
-              plain
-              @click="openCreateDialog(m.id, 'openai')"
-            >
-              + {{ m.id }}
-            </el-button>
+            <template v-if="canManage">
+              <el-button
+                v-for="m in p.models"
+                :key="m.id"
+                size="small"
+                plain
+                @click="openCreateDialog(m.id, 'openai')"
+              >
+                + {{ m.id }}
+              </el-button>
+            </template>
+            <el-tag v-for="m in (canManage ? [] : p.models)" :key="m.id" size="small" effect="plain">
+              {{ m.id }}
+            </el-tag>
             <a :href="p.docs_url" target="_blank" rel="noreferrer" class="key-link">
               申请 API Key ↗
             </a>
@@ -449,7 +471,7 @@ onMounted(() => {
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="235" fixed="right">
+        <el-table-column v-if="canManage" label="操作" width="235" fixed="right">
           <template #default="{ row }">
             <el-button
               link

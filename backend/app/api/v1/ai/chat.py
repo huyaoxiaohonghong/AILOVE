@@ -9,7 +9,8 @@ from fastapi.responses import StreamingResponse
 
 from app.api.deps import get_current_token_payload
 from app.core.exceptions import BusinessException
-from app.schemas.ai import ChatRequest
+from app.core.rate_limit import rate_limit
+from app.schemas.ai import ChatRequest, ConversationRenameRequest
 from app.schemas.common import ok
 from app.services.ai_config_service import list_ai_configs
 from app.services.ai_providers import get_provider_adapter
@@ -17,6 +18,50 @@ from app.services.llm_service import build_owner_scope, llm_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ai", tags=["AI-LangChain 对话"])
+
+
+@router.get("/conversations", summary="获取当前用户的 AI 历史会话列表")
+async def list_conversations(current_user: dict[str, Any] = Depends(get_current_token_payload)):
+    user_type, user_id = _resolve_identity(current_user)
+    items = await llm_service.list_conversations(user_type, user_id, limit=30)
+    return ok({"items": items})
+
+
+@router.get("/conversations/{session_id}/messages", summary="加载指定历史会话完整消息并预热上下文")
+async def get_conversation_messages(
+    session_id: str,
+    current_user: dict[str, Any] = Depends(get_current_token_payload),
+):
+    user_type, user_id = _resolve_identity(current_user)
+    conv = await llm_service.get_conversation_messages(session_id, user_type, user_id)
+    if conv is None:
+        raise BusinessException("目标会话不存在或无权访问", code=40405, status_code=404)
+    return ok(conv)
+
+
+@router.patch("/conversations/{session_id}", summary="重命名 AI 历史会话标题")
+async def rename_conversation(
+    session_id: str,
+    req: ConversationRenameRequest,
+    current_user: dict[str, Any] = Depends(get_current_token_payload),
+):
+    user_type, user_id = _resolve_identity(current_user)
+    updated = await llm_service.rename_conversation(session_id, user_type, user_id, req.title)
+    if updated is None:
+        raise BusinessException("目标会话不存在或无权访问", code=40405, status_code=404)
+    return ok(updated, message="会话标题已更新")
+
+
+@router.delete("/conversations/{session_id}", summary="删除 AI 历史会话及上下文记忆")
+async def delete_conversation(
+    session_id: str,
+    current_user: dict[str, Any] = Depends(get_current_token_payload),
+):
+    user_type, user_id = _resolve_identity(current_user)
+    deleted = await llm_service.delete_conversation(session_id, user_type, user_id)
+    if not deleted:
+        raise BusinessException("目标会话不存在或无权访问", code=40405, status_code=404)
+    return ok({"session_id": session_id, "deleted": True}, message="会话已删除")
 
 
 @router.get("/models", summary="获取当前已启用的可选 AI 模型列表")
@@ -57,7 +102,11 @@ def _sse(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-@router.post("/chat", summary="LangChain 同步多轮对话")
+@router.post(
+    "/chat",
+    summary="LangChain 同步多轮对话",
+    dependencies=[Depends(rate_limit("ai_chat", limit=30, window_seconds=60, by_user=True))],
+)
 async def ai_chat(
     req: ChatRequest,
     current_user: dict[str, Any] = Depends(get_current_token_payload),
@@ -67,7 +116,11 @@ async def ai_chat(
     return ok(result.model_dump())
 
 
-@router.post("/chat/stream", summary="LangChain SSE 流式多轮对话（支持 OpenAI/Anthropic 双协议与深度思考流）")
+@router.post(
+    "/chat/stream",
+    summary="LangChain SSE 流式多轮对话（支持 OpenAI/Anthropic 双协议与深度思考流）",
+    dependencies=[Depends(rate_limit("ai_chat", limit=30, window_seconds=60, by_user=True))],
+)
 async def ai_chat_stream(
     req: ChatRequest,
     current_user: dict[str, Any] = Depends(get_current_token_payload),

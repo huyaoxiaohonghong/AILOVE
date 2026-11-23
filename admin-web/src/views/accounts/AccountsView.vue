@@ -12,9 +12,12 @@ import {
 } from '@/api/accounts'
 import { checkEmailPolicy, type EmailAnalysisResult } from '@/api/auth'
 import { fetchRbacRoles, type RbacRoleItem } from '@/api/rbac'
+import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 
+const appStore = useAppStore()
 const authStore = useAuthStore()
+const passwordMinLength = computed(() => Math.max(6, appStore.publicConfig.password_min_length || 8))
 const canCreate = computed(() => authStore.hasPermission('account:create'))
 const canManage = computed(() => authStore.hasPermission('account:manage'))
 
@@ -67,12 +70,16 @@ const createForm = reactive({
   allow_non_mainstream_email: false,
 })
 
-const createRules: FormRules = {
+const createRules = computed<FormRules>(() => ({
   email: [{ required: true, message: '请输入用户邮箱', trigger: 'blur' }],
   nickname: [{ required: true, message: '请输入用户昵称', trigger: 'blur' }],
   password: [
     { required: true, message: '请输入初始密码', trigger: 'blur' },
-    { min: 8, message: '密码至少 8 位', trigger: 'blur' },
+    {
+      min: passwordMinLength.value,
+      message: `密码至少 ${passwordMinLength.value} 位`,
+      trigger: 'blur',
+    },
     {
       validator: (_rule, value: string, callback) => {
         if (value && (!/[A-Za-z]/.test(value) || !/\d/.test(value))) {
@@ -84,7 +91,7 @@ const createRules: FormRules = {
       trigger: 'blur',
     },
   ],
-}
+}))
 
 async function loadAccounts() {
   loading.value = true
@@ -129,7 +136,8 @@ function generateStrongPassword() {
   let out = ''
   out += letters[Math.floor(Math.random() * letters.length)]
   out += digits[Math.floor(Math.random() * digits.length)]
-  for (let i = 0; i < 10; i++) {
+  const totalLen = Math.max(12, passwordMinLength.value)
+  for (let i = 2; i < totalLen; i++) {
     out += all[Math.floor(Math.random() * all.length)]
   }
   createForm.password = out
@@ -179,16 +187,17 @@ async function handleToggleStatus(row: AccountItem) {
 }
 
 async function handleResetPassword(row: AccountItem) {
+  const minLen = passwordMinLength.value
   try {
     const { value } = await ElMessageBox.prompt(
-      `为用户「${row.nickname} (${row.email})」设置新密码（至少 8 位且包含字母和数字）`,
+      `为用户「${row.nickname} (${row.email})」设置新密码（至少 ${minLen} 位且包含字母和数字）`,
       '重置密码',
       {
         confirmButtonText: '确认重置',
         cancelButtonText: '取消',
         inputPlaceholder: '请输入新密码',
-        inputPattern: /^(?=.*[A-Za-z])(?=.*\d).{8,128}$/,
-        inputErrorMessage: '密码至少 8 位且需同时包含字母和数字',
+        inputPattern: new RegExp(`^(?=.*[A-Za-z])(?=.*\\d).{${minLen},128}$`),
+        inputErrorMessage: `密码至少 ${minLen} 位且需同时包含字母和数字`,
       },
     )
     await resetAccountPassword(row.id, value)
@@ -478,7 +487,7 @@ onMounted(() => {
         </el-form-item>
 
         <el-form-item label="初始密码" prop="password">
-          <el-input v-model="createForm.password" placeholder="至少 8 位且包含字母与数字">
+          <el-input v-model="createForm.password" :placeholder="`至少 ${passwordMinLength} 位且包含字母与数字`">
             <template #append>
               <el-button @click="generateStrongPassword">随机生成</el-button>
             </template>

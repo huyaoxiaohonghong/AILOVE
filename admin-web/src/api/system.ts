@@ -48,6 +48,7 @@ export interface PublicSystemConfig {
   maintenance_mode: boolean
   registration_enabled: boolean
   slider_captcha_enabled: boolean
+  password_min_length: number
   configs: Record<string, unknown>
 }
 

@@ -11,10 +11,13 @@ import {
   type LoginLogItem,
   type SessionItem,
 } from '@/api/auth'
+import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 
+const appStore = useAppStore()
 const authStore = useAuthStore()
 const user = computed(() => authStore.user)
+const passwordMinLength = computed(() => Math.max(6, appStore.publicConfig.password_min_length || 8))
 
 const activeTab = ref('profile')
 
@@ -35,11 +38,15 @@ const pwdForm = reactive({
   logout_other_devices: true,
 })
 
-const pwdRules: FormRules = {
+const pwdRules = computed<FormRules>(() => ({
   current_password: [{ required: true, message: '请输入当前原密码', trigger: 'blur' }],
   new_password: [
     { required: true, message: '请输入新密码', trigger: 'blur' },
-    { min: 8, message: '密码至少 8 位', trigger: 'blur' },
+    {
+      min: passwordMinLength.value,
+      message: `密码至少 ${passwordMinLength.value} 位`,
+      trigger: 'blur',
+    },
     {
       validator: (_rule, value: string, callback) => {
         if (value && (!/[A-Za-z]/.test(value) || !/\d/.test(value))) {
@@ -64,7 +71,7 @@ const pwdRules: FormRules = {
       trigger: 'blur',
     },
   ],
-}
+}))
 
 const logsLoading = ref(false)
 const loginLogs = ref<LoginLogItem[]>([])
@@ -77,9 +84,11 @@ const sourceText = computed(() => {
 })
 
 const roleText = computed(() => {
+  if (user.value?.role_name) return user.value.role_name
   const r = user.value?.role
   if (r === 'super_admin') return '超级管理员'
-  if (r === 'admin') return '管理员'
+  if (r === 'admin') return '系统管理员'
+  if (r === 'operator') return '运营审计员'
   return '普通用户'
 })
 
@@ -348,7 +357,7 @@ onMounted(async () => {
                 v-model="pwdForm.new_password"
                 type="password"
                 show-password
-                placeholder="至少 8 位且包含字母与数字"
+                :placeholder="`至少 ${passwordMinLength} 位且包含字母与数字`"
               />
             </el-form-item>
             <el-form-item label="确认新密码" prop="confirm_password">
