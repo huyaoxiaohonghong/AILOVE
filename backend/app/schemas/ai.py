@@ -12,6 +12,7 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=8000, description="用户输入消息")
     session_id: str | None = Field(default=None, max_length=64, description="多轮会话ID")
     config_id: int | None = Field(default=None, description="指定使用的模型配置ID（留空使用全局默认）")
+    persona_id: int | None = Field(default=None, description="指定使用的 AI 智能体模板 ID")
     system_prompt: str | None = Field(default=None, max_length=3000, description="覆盖系统提示词")
     temperature: float | None = Field(default=None, ge=0.0, le=2.0, description="临时覆盖温度")
     timezone: str | None = Field(
@@ -28,6 +29,8 @@ class ChatResponse(BaseModel):
     protocol: str = "openai"
     config_id: int | None = None
     config_name: str = ""
+    persona_id: int | None = None
+    persona_name: str = ""
     is_mock: bool = False
     history_length: int = 0
     token_usage: int = 0
@@ -108,3 +111,32 @@ class AIModelConfigItem(BaseModel):
     last_test_message: str = ""
     last_tested_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+PersonaCategory = Literal["general", "writing", "coding", "translate", "analysis"]
+
+
+class AIPersonaCreate(BaseModel):
+    code: str = Field(..., min_length=2, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$", description="唯一编码")
+    name: str = Field(..., min_length=1, max_length=64, description="智能体名称")
+    avatar_emoji: str = Field(default="🤖", min_length=1, max_length=16, description="Emoji 图标")
+    category: PersonaCategory = Field(default="general", description="智能体分类")
+    description: str = Field(default="", max_length=255, description="一句话简介")
+    system_prompt: str = Field(..., min_length=4, max_length=6000, description="系统人设提示词")
+    starter_prompts: list[str] = Field(default_factory=list, description="开场白快捷示例提示词")
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0, description="覆盖采样温度")
+    is_enabled: bool = True
+    sort_order: int = Field(default=100, ge=0, le=9999)
+
+
+class AIPersonaUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    avatar_emoji: str | None = Field(default=None, min_length=1, max_length=16)
+    category: PersonaCategory | None = None
+    description: str | None = Field(default=None, max_length=255)
+    system_prompt: str | None = Field(default=None, min_length=4, max_length=6000)
+    starter_prompts: list[str] | None = None
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    clear_temperature: bool = Field(default=False, description="是否清空覆盖温度")
+    is_enabled: bool | None = None
+    sort_order: int | None = Field(default=None, ge=0, le=9999)

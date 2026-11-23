@@ -52,6 +52,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'AI 模型配置', icon: 'Cpu', requiresAdmin: true, permission: 'ai:config:view' },
       },
       {
+        path: 'ai-personas',
+        name: 'AiPersonas',
+        component: () => import('@/views/ai/AiPersonasView.vue'),
+        meta: { title: '智能体工坊', icon: 'MagicStick', requiresAdmin: true, permission: 'ai:config:view' },
+      },
+      {
         path: 'ai-playground',
         name: 'AiPlayground',
         component: () => import('@/views/ai/AiPlaygroundView.vue'),

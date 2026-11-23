@@ -1,15 +1,21 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { MagicStick } from '@element-plus/icons-vue'
 import {
   deleteAiConversation,
   fetchAiConversations,
   fetchAvailableModels,
   fetchConversationMessages,
+  fetchMyAiQuota,
+  fetchPublicPersonas,
   renameAiConversation,
   sendAiChat,
   streamAiChat,
   type AIConversationItem,
+  type AIPersonaItem,
+  type AIUserQuota,
   type AvailableAIModel,
 } from '@/api/ai'
 import { decodeUtf8Base64, renderMarkdown } from '@/utils/markdown'
@@ -31,8 +37,15 @@ const WELCOME_MSG: ChatBubble = {
     '你好！这里是 **AILOVE LangChain 对话工作台**，支持持久化多会话切换、OpenAI / Anthropic 双协议引擎与完整 **Markdown** 代码高亮渲染。\n\n- 默认接入 `deepseek-flash` / `deepseek-v4-pro`\n- 自动注入实时系统时钟上下文\n- 支持思考链展示、停止生成、复制代码与重新生成',
 }
 
+const route = useRoute()
+
 const availableModels = ref<AvailableAIModel[]>([])
 const selectedConfigId = ref<number | undefined>(undefined)
+const personas = ref<AIPersonaItem[]>([])
+const selectedPersonaId = ref<number | undefined>(undefined)
+const plazaDrawerVisible = ref(false)
+const plazaCategory = ref('all')
+const quota = ref<AIUserQuota | null>(null)
 const conversations = ref<AIConversationItem[]>([])
 const conversationsLoading = ref(false)
 const sidebarVisible = ref(true)
@@ -52,6 +65,28 @@ const currentModel = computed(
   () => availableModels.value.find((m) => m.id === selectedConfigId.value) ?? null,
 )
 
+const activePersona = computed(
+  () => personas.value.find((p) => p.id === selectedPersonaId.value) ?? null,
+)
+
+const plazaFilteredPersonas = computed(() =>
+  plazaCategory.value === 'all'
+    ? personas.value
+    : personas.value.filter((p) => p.category === plazaCategory.value),
+)
+
+const quotaSummaryText = computed(() => {
+  const q = quota.value
+  if (!q) return ''
+  if (q.is_exempt) {
+    return `配额豁免 · 今日 ${q.requests_used} 次`
+  }
+  if (q.requests_limit > 0) {
+    return `今日剩余 ${q.requests_remaining ?? 0}/${q.requests_limit} 次`
+  }
+  return `今日已用 ${q.requests_used} 次`
+})
+
 const lastAssistantIdx = computed(() => {
   for (let i = messages.value.length - 1; i >= 0; i--) {
     if (messages.value[i]?.role === 'assistant') return i
@@ -70,6 +105,40 @@ async function loadModels() {
   } catch {
     // 忽略
   }
+}
+
+async function loadPersonas() {
+  try {
+    const res = await fetchPublicPersonas()
+    personas.value = res.items
+    const qPid = Number(route.query.personaId)
+    if (Number.isFinite(qPid) && qPid > 0) {
+      const matched = res.items.find((p) => p.id === qPid)
+      if (matched) {
+        selectedPersonaId.value = matched.id
+      }
+    }
+  } catch {
+    // 忽略
+  }
+}
+
+async function loadQuota() {
+  try {
+    quota.value = await fetchMyAiQuota()
+  } catch {
+    // 忽略
+  }
+}
+
+function selectPersona(pid?: number) {
+  selectedPersonaId.value = pid
+  plazaDrawerVisible.value = false
+}
+
+async function quickAskStarter(promptText: string) {
+  if (!promptText || sending.value) return
+  await sendPromptText(promptText, true)
 }
 
 async function loadConversations() {
@@ -189,6 +258,7 @@ async function sendPromptText(text: string, appendUserBubble = true) {
       message: text,
       session_id: sessionId.value || undefined,
       config_id: selectedConfigId.value,
+      persona_id: selectedPersonaId.value,
       system_prompt: systemPrompt.value.trim() || undefined,
       timezone: clientTz,
     }
@@ -201,7 +271,8 @@ async function sendPromptText(text: string, appendUserBubble = true) {
           onMeta: (meta) => {
             sessionId.value = meta.session_id
             if (meta.model) {
-              assistantMsg.modelLabel = `${meta.config_name || 'AI'} (${meta.model})${meta.is_mock ? ' · 演示' : ''}`
+              const pPrefix = meta.persona_name ? `${meta.persona_name} · ` : ''
+              assistantMsg.modelLabel = `${pPrefix}${meta.config_name || 'AI'} (${meta.model})${meta.is_mock ? ' · 演示' : ''}`
             }
           },
           onReasoning: (chunk) => {
@@ -230,10 +301,11 @@ async function sendPromptText(text: string, appendUserBubble = true) {
       assistantMsg.reasoning = res.reasoning || ''
       assistantMsg.content = res.reply
       assistantMsg.tokenUsage = res.token_usage || undefined
-      assistantMsg.modelLabel = `${res.config_name || 'AI'} (${res.model})${res.is_mock ? ' · 演示' : ''}`
+      const pPrefix = res.persona_name ? `${res.persona_name} · ` : ''
+      assistantMsg.modelLabel = `${pPrefix}${res.config_name || 'AI'} (${res.model})${res.is_mock ? ' · 演示' : ''}`
       await scrollToBottom()
     }
-    void loadConversations()
+    void Promise.all([loadConversations(), loadQuota()])
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
       assistantMsg.content = assistantMsg.content
@@ -303,7 +375,7 @@ function handleMessageAreaClick(event: MouseEvent) {
 }
 
 onMounted(() => {
-  void Promise.all([loadModels(), loadConversations()])
+  void Promise.all([loadModels(), loadPersonas(), loadConversations(), loadQuota()])
 })
 
 onBeforeUnmount(() => {
@@ -321,6 +393,17 @@ onBeforeUnmount(() => {
         </p>
       </div>
       <div class="toolbar-actions">
+        <el-tag
+          v-if="quota"
+          :type="quota.is_exempt ? 'warning' : (quota.requests_remaining ?? 1) <= 5 ? 'danger' : 'info'"
+          effect="plain"
+          class="mono-num quota-pill"
+        >
+          {{ quotaSummaryText }}
+        </el-tag>
+        <el-button plain size="small" :icon="MagicStick" @click="plazaDrawerVisible = true">
+          智能体广场
+        </el-button>
         <el-button plain size="small" @click="sidebarVisible = !sidebarVisible">
           {{ sidebarVisible ? '收起历史栏' : '展开历史栏' }}
         </el-button>
@@ -401,7 +484,11 @@ onBeforeUnmount(() => {
         <div class="prompt-row">
           <el-input
             v-model="systemPrompt"
-            placeholder="可选：临时覆盖 System Prompt（留空自动采用所选模型配置中的默认人设）"
+            :placeholder="
+              activePersona
+                ? `已激活「${activePersona.name}」人设（留空自动生效，输入可临时覆盖）`
+                : '可选：临时覆盖 System Prompt（留空自动采用所选模型配置中的默认人设）'
+            "
             clearable
           >
             <template #prepend>System Prompt</template>
@@ -409,6 +496,36 @@ onBeforeUnmount(() => {
           <el-tag v-if="sessionId" type="info" effect="plain" class="mono-num">
             SID: {{ sessionId.slice(0, 10) }}
           </el-tag>
+        </div>
+
+        <div v-if="personas.length > 0" class="persona-bar">
+          <button
+            type="button"
+            class="persona-chip"
+            :class="{ 'is-active': selectedPersonaId === undefined }"
+            @click="selectPersona(undefined)"
+          >
+            默认直连
+          </button>
+          <button
+            v-for="p in personas.slice(0, 5)"
+            :key="p.id"
+            type="button"
+            class="persona-chip"
+            :class="{ 'is-active': selectedPersonaId === p.id }"
+            @click="selectPersona(p.id)"
+          >
+            <span>{{ p.avatar_emoji }}</span>
+            <span>{{ p.name }}</span>
+          </button>
+          <button
+            v-if="personas.length > 5"
+            type="button"
+            class="persona-chip is-more"
+            @click="plazaDrawerVisible = true"
+          >
+            更多 ({{ personas.length }})
+          </button>
         </div>
 
         <div ref="listRef" class="message-list" @click="handleMessageAreaClick">
@@ -463,6 +580,20 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
+        <div v-if="activePersona?.starter_prompts?.length" class="starter-bar">
+          <span class="starter-label">{{ activePersona.avatar_emoji }} 快捷提问：</span>
+          <button
+            v-for="sp in activePersona.starter_prompts"
+            :key="sp"
+            type="button"
+            class="starter-chip"
+            :disabled="sending"
+            @click="quickAskStarter(sp)"
+          >
+            {{ sp }}
+          </button>
+        </div>
+
         <div class="composer">
           <el-input
             v-model="inputText"
@@ -482,6 +613,63 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
+
+    <el-drawer v-model="plazaDrawerVisible" title="AI 智能体广场" size="420px">
+      <div class="plaza-cats">
+        <button
+          v-for="cat in [
+            { k: 'all', l: '全部' },
+            { k: 'general', l: '通用' },
+            { k: 'writing', l: '文案' },
+            { k: 'coding', l: '研发' },
+            { k: 'translate', l: '翻译' },
+            { k: 'analysis', l: '分析' },
+          ]"
+          :key="cat.k"
+          type="button"
+          class="persona-chip"
+          :class="{ 'is-active': plazaCategory === cat.k }"
+          @click="plazaCategory = cat.k"
+        >
+          {{ cat.l }}
+        </button>
+      </div>
+
+      <div class="plaza-list">
+        <div
+          class="plaza-card"
+          :class="{ 'is-active': selectedPersonaId === undefined }"
+          @click="selectPersona(undefined)"
+        >
+          <div class="plaza-card-top">
+            <span class="plaza-emoji">✨</span>
+            <div>
+              <div class="plaza-name">默认直连对话</div>
+              <div class="plaza-desc">不使用特定角色，直接采用所选大模型配置与系统提示词</div>
+            </div>
+          </div>
+        </div>
+
+        <div
+          v-for="p in plazaFilteredPersonas"
+          :key="p.id"
+          class="plaza-card"
+          :class="{ 'is-active': selectedPersonaId === p.id }"
+          @click="selectPersona(p.id)"
+        >
+          <div class="plaza-card-top">
+            <span class="plaza-emoji">{{ p.avatar_emoji }}</span>
+            <div style="flex: 1; min-width: 0">
+              <div class="plaza-name-row">
+                <span class="plaza-name">{{ p.name }}</span>
+                <span class="plaza-usage mono-num">{{ p.usage_count }} 次</span>
+              </div>
+              <div class="plaza-desc">{{ p.description }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -880,5 +1068,135 @@ onBeforeUnmount(() => {
   .history-pane {
     display: none;
   }
+}
+
+.persona-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 6px;
+}
+
+.persona-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--ailove-border);
+  background: var(--ailove-subtle);
+  color: var(--ailove-ink-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.16s;
+}
+
+.persona-chip:hover {
+  border-color: var(--ailove-brand-200);
+  color: var(--ailove-brand-600);
+}
+
+.persona-chip.is-active {
+  background: var(--ailove-brand-50);
+  border-color: var(--ailove-brand-500);
+  color: var(--ailove-brand-600);
+}
+
+.starter-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.starter-label {
+  font-size: 12px;
+  color: var(--ailove-ink-muted);
+}
+
+.starter-chip {
+  border: 1px dashed var(--ailove-brand-200);
+  background: var(--ailove-brand-50);
+  color: var(--ailove-brand-600);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.starter-chip:hover:not(:disabled) {
+  background: var(--ailove-brand-600);
+  color: #ffffff;
+}
+
+.plaza-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.plaza-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.plaza-card {
+  border: 1px solid var(--ailove-border);
+  background: var(--ailove-surface);
+  border-radius: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.plaza-card:hover,
+.plaza-card.is-active {
+  border-color: var(--ailove-brand-500);
+  background: var(--ailove-brand-50);
+}
+
+.plaza-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.plaza-emoji {
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.plaza-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.plaza-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ailove-ink-primary);
+}
+
+.plaza-usage {
+  font-size: 11.5px;
+  color: var(--ailove-ink-muted);
+}
+
+.plaza-desc {
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--ailove-ink-secondary);
+  line-height: 1.5;
 }
 </style>

@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.api.v1 import auth, captcha, health, system
 from app.api.v1.admin import accounts as admin_accounts
 from app.api.v1.admin import ai_configs as admin_ai_configs
+from app.api.v1.admin import ai_personas as admin_ai_personas
 from app.api.v1.admin import auth as admin_auth
 from app.api.v1.admin import dashboard as admin_dashboard
 from app.api.v1.admin import logs as admin_logs
@@ -33,6 +34,7 @@ admin_router.include_router(admin_auth.router)
 admin_router.include_router(admin_dashboard.router)
 admin_router.include_router(admin_accounts.router)
 admin_router.include_router(admin_ai_configs.router)
+admin_router.include_router(admin_ai_personas.router)
 admin_router.include_router(admin_users.router)
 admin_router.include_router(admin_system_configs.router)
 admin_router.include_router(admin_rbac.router)

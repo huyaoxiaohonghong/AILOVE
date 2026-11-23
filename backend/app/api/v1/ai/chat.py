@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
 from app.api.deps import get_current_token_payload
@@ -13,7 +13,9 @@ from app.core.rate_limit import rate_limit
 from app.schemas.ai import ChatRequest, ConversationRenameRequest
 from app.schemas.common import ok
 from app.services.ai_config_service import list_ai_configs
+from app.services.ai_persona_service import list_personas
 from app.services.ai_providers import get_provider_adapter
+from app.services.ai_usage_service import get_user_quota_status
 from app.services.llm_service import build_owner_scope, llm_service
 
 logger = logging.getLogger(__name__)
@@ -91,11 +93,37 @@ async def get_available_models(_user: dict[str, Any] = Depends(get_current_token
     return ok({"items": items})
 
 
+@router.get("/personas", summary="获取当前已启用的 AI 智能体广场列表")
+async def get_public_ai_personas(
+    category: str | None = Query(default=None, description="分类过滤"),
+    _user: dict[str, Any] = Depends(get_current_token_payload),
+):
+    items = await list_personas(enabled_only=True, category=category)
+    return ok({"items": items, "total": len(items)})
+
+
+@router.get("/quota", summary="查询当前用户今日 AI 调用配额")
+async def get_my_ai_quota(current_user: dict[str, Any] = Depends(get_current_token_payload)):
+    user_type, user_id = _resolve_identity(current_user)
+    _, role = _resolve_user_meta(current_user)
+    quota = await get_user_quota_status(build_owner_scope(user_type, user_id), role)
+    return ok(quota)
+
+
 def _resolve_identity(current_user: dict[str, Any]) -> tuple[str, int]:
     user_type = str(current_user.get("type", "web"))
     raw_sub = str(current_user.get("sub", "0"))
     user_id = int(raw_sub) if raw_sub.isdigit() else 0
     return user_type, user_id
+
+
+def _resolve_user_meta(current_user: dict[str, Any]) -> tuple[str, str]:
+    username = str(
+        current_user.get("username") or current_user.get("email") or current_user.get("sub") or ""
+    )
+    user_type = str(current_user.get("type", "web"))
+    role = str(current_user.get("role") or ("user" if user_type == "miniapp" else "user"))
+    return username, role
 
 
 def _sse(payload: dict[str, Any]) -> str:
@@ -112,7 +140,10 @@ async def ai_chat(
     current_user: dict[str, Any] = Depends(get_current_token_payload),
 ):
     user_type, user_id = _resolve_identity(current_user)
-    result = await llm_service.chat(req, user_type=user_type, user_id=user_id)
+    username, role = _resolve_user_meta(current_user)
+    result = await llm_service.chat(
+        req, user_type=user_type, user_id=user_id, username=username, role=role
+    )
     return ok(result.model_dump())
 
 
@@ -126,8 +157,9 @@ async def ai_chat_stream(
     current_user: dict[str, Any] = Depends(get_current_token_payload),
 ):
     user_type, user_id = _resolve_identity(current_user)
-    session_id, cfg, event_gen = await llm_service.stream_chat(
-        req, user_type=user_type, user_id=user_id
+    username, role = _resolve_user_meta(current_user)
+    session_id, cfg, persona_meta, event_gen = await llm_service.stream_chat(
+        req, user_type=user_type, user_id=user_id, username=username, role=role
     )
 
     async def event_generator():
@@ -139,6 +171,8 @@ async def ai_chat_stream(
                 "provider": cfg.provider,
                 "protocol": cfg.protocol,
                 "config_name": cfg.name,
+                "persona_id": persona_meta.get("persona_id"),
+                "persona_name": persona_meta.get("persona_name") or "",
                 "is_mock": not cfg.is_configured,
             }
         )

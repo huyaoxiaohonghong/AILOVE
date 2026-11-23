@@ -14,6 +14,7 @@ from app.core.logging import setup_logging
 from app.db.mysql import check_mysql_health, dispose_mysql, ensure_tables, init_mysql
 from app.db.redis import check_redis_health, close_redis, init_redis
 from app.services.ai_config_service import ensure_default_ai_config
+from app.services.ai_persona_service import ensure_default_personas
 from app.services.auth_service import ensure_default_admin
 from app.services.rbac_service import ensure_default_roles
 from app.services.sys_config_service import ensure_default_sys_configs
@@ -60,6 +61,7 @@ async def lifespan(_app: FastAPI):
         await ensure_default_sys_configs()
         await ensure_default_admin()
         await ensure_default_ai_config()
+        await ensure_default_personas()
     else:
         logger.warning(
             "MySQL 未连接，服务已以降级模式启动；可执行 `docker compose up -d` 启动本地 MySQL/Redis。"

@@ -200,6 +200,28 @@ DEFAULT_CONFIG_SPECS: tuple[ConfigSpec, ...] = (
         min_val=200,
         max_val=8000,
     ),
+    ConfigSpec(
+        key="ai.daily_user_request_limit",
+        group="ai",
+        label="普通用户每日 AI 调用上限",
+        value_type="int",
+        default="100",
+        description="限制单个普通用户每日允许发起的 AI 对话次数（0 表示不限，管理员角色豁免）",
+        sort_order=40,
+        min_val=0,
+        max_val=10000,
+    ),
+    ConfigSpec(
+        key="ai.daily_user_token_limit",
+        group="ai",
+        label="普通用户每日 Token 限额",
+        value_type="int",
+        default="100000",
+        description="限制单个普通用户每日累计消耗的 Token 总量（0 表示不限，管理员角色豁免）",
+        sort_order=50,
+        min_val=0,
+        max_val=10000000,
+    ),
     # --- log ---
     ConfigSpec(
         key="log.audit_enabled",

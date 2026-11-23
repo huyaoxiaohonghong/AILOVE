@@ -193,3 +193,56 @@ CREATE TABLE IF NOT EXISTS `audit_logs` (
   KEY `idx_audit_logs_result_status` (`result`, `status_code`),
   KEY `idx_audit_logs_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统操作审计日志表';
+
+-- 11. AI 智能体 / Prompt 预设模板表
+CREATE TABLE IF NOT EXISTS `ai_personas` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `code` VARCHAR(64) NOT NULL COMMENT '智能体唯一编码',
+  `name` VARCHAR(64) NOT NULL COMMENT '智能体名称',
+  `avatar_emoji` VARCHAR(16) NOT NULL DEFAULT '🤖' COMMENT '头像图标 Emoji',
+  `category` VARCHAR(32) NOT NULL DEFAULT 'general' COMMENT '分类',
+  `description` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '一句话简介',
+  `system_prompt` TEXT NOT NULL COMMENT '角色系统提示词',
+  `starter_prompts_json` TEXT NOT NULL COMMENT '开场白示例 JSON 数组',
+  `temperature` FLOAT NULL COMMENT '覆盖采样温度',
+  `is_system` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否系统预置智能体',
+  `is_enabled` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用',
+  `sort_order` INT NOT NULL DEFAULT 100 COMMENT '排序',
+  `usage_count` INT NOT NULL DEFAULT 0 COMMENT '累计使用次数',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_ai_personas_code` (`code`),
+  KEY `idx_ai_personas_category` (`category`),
+  KEY `idx_ai_personas_enabled` (`is_enabled`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI 智能体模板表';
+
+-- 12. AI 对话调用明细与 Token 用量流水表
+CREATE TABLE IF NOT EXISTS `ai_usage_logs` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `owner_scope` VARCHAR(64) NOT NULL COMMENT '调用者标识: web:1 / miniapp:2',
+  `user_type` VARCHAR(16) NOT NULL DEFAULT 'web' COMMENT '用户端类型: web / miniapp',
+  `user_id` BIGINT NOT NULL DEFAULT 0 COMMENT '用户 ID',
+  `username` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '用户名快照',
+  `session_id` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '会话 ID',
+  `persona_id` BIGINT NULL COMMENT '使用的智能体 ID',
+  `persona_name` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '智能体名称快照',
+  `provider` VARCHAR(32) NOT NULL DEFAULT 'deepseek' COMMENT '模型提供商',
+  `model_name` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '模型名称',
+  `prompt_tokens` INT NOT NULL DEFAULT 0 COMMENT '输入 Token 数',
+  `completion_tokens` INT NOT NULL DEFAULT 0 COMMENT '输出 Token 数',
+  `total_tokens` INT NOT NULL DEFAULT 0 COMMENT '总 Token 数',
+  `latency_ms` INT NOT NULL DEFAULT 0 COMMENT '端到端响应耗时(毫秒)',
+  `is_stream` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否流式调用',
+  `is_mock` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否 Mock 兜底',
+  `status` VARCHAR(16) NOT NULL DEFAULT 'success' COMMENT '调用状态: success / failed',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '调用时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_ai_usage_logs_owner` (`owner_scope`),
+  KEY `idx_ai_usage_logs_user` (`user_id`),
+  KEY `idx_ai_usage_logs_session` (`session_id`),
+  KEY `idx_ai_usage_logs_persona` (`persona_id`),
+  KEY `idx_ai_usage_logs_model` (`model_name`),
+  KEY `idx_ai_usage_logs_status` (`status`),
+  KEY `idx_ai_usage_logs_created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI 调用流水表';

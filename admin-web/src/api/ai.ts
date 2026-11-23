@@ -78,6 +78,7 @@ export interface AiChatPayload {
   message: string
   session_id?: string
   config_id?: number
+  persona_id?: number
   system_prompt?: string
   temperature?: number
   timezone?: string
@@ -92,9 +93,98 @@ export interface AiChatResult {
   protocol?: AIProtocol
   config_id: number | null
   config_name: string
+  persona_id?: number | null
+  persona_name?: string
   is_mock: boolean
   history_length: number
   token_usage: number
+}
+
+export type PersonaCategory = 'general' | 'writing' | 'coding' | 'translate' | 'analysis'
+
+export interface AIPersonaItem {
+  id: number
+  code: string
+  name: string
+  avatar_emoji: string
+  category: PersonaCategory
+  description: string
+  system_prompt: string
+  starter_prompts: string[]
+  temperature: number | null
+  is_system: boolean
+  is_enabled: boolean
+  sort_order: number
+  usage_count: number
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface AIPersonaPayload {
+  code?: string
+  name: string
+  avatar_emoji: string
+  category: PersonaCategory
+  description: string
+  system_prompt: string
+  starter_prompts: string[]
+  temperature?: number | null
+  clear_temperature?: boolean
+  is_enabled: boolean
+  sort_order: number
+}
+
+export interface AIUserQuota {
+  owner_scope: string
+  role: string
+  is_exempt: boolean
+  date: string
+  requests_used: number
+  requests_limit: number
+  requests_remaining: number | null
+  tokens_used: number
+  tokens_limit: number
+  tokens_remaining: number | null
+}
+
+export interface AIAnalyticsData {
+  days: number
+  summary: {
+    total_requests: number
+    success_requests: number
+    failed_requests: number
+    today_requests: number
+    total_tokens: number
+    today_tokens: number
+    avg_latency_ms: number
+    active_users: number
+  }
+  daily_trend: Array<{
+    date: string
+    label: string
+    requests: number
+    tokens: number
+    avg_latency_ms: number
+  }>
+  by_model: Array<{
+    model_name: string
+    provider: string
+    requests: number
+    tokens: number
+    share_percent: number
+  }>
+  top_users: Array<{
+    owner_scope: string
+    username: string
+    requests: number
+    tokens: number
+  }>
+  top_personas: Array<{
+    persona_id: number | null
+    persona_name: string
+    requests: number
+    tokens: number
+  }>
 }
 
 export interface AIConversationItem {
@@ -255,6 +345,60 @@ export function deleteAiConversation(sessionId: string) {
   })
 }
 
+export function fetchPublicPersonas(category?: string) {
+  return request<{ items: AIPersonaItem[]; total: number }>({
+    url: '/ai/personas',
+    method: 'get',
+    params: category && category !== 'all' ? { category } : undefined,
+  })
+}
+
+export function fetchMyAiQuota() {
+  return request<AIUserQuota>({
+    url: '/ai/quota',
+    method: 'get',
+  })
+}
+
+export function fetchAdminPersonas(params?: { category?: string; keyword?: string }) {
+  return request<{ items: AIPersonaItem[]; total: number }>({
+    url: '/admin/ai/personas',
+    method: 'get',
+    params,
+  })
+}
+
+export function createAdminPersona(data: AIPersonaPayload) {
+  return request<AIPersonaItem>({
+    url: '/admin/ai/personas',
+    method: 'post',
+    data,
+  })
+}
+
+export function updateAdminPersona(id: number, data: Partial<AIPersonaPayload>) {
+  return request<AIPersonaItem>({
+    url: `/admin/ai/personas/${id}`,
+    method: 'put',
+    data,
+  })
+}
+
+export function deleteAdminPersona(id: number) {
+  return request<{ deleted_id: number; name: string }>({
+    url: `/admin/ai/personas/${id}`,
+    method: 'delete',
+  })
+}
+
+export function fetchAiAnalytics(days = 7) {
+  return request<AIAnalyticsData>({
+    url: '/admin/ai/analytics',
+    method: 'get',
+    params: { days },
+  })
+}
+
 export async function streamAiChat(
   data: AiChatPayload,
   callbacks: {
@@ -264,6 +408,8 @@ export async function streamAiChat(
       provider?: string
       protocol?: AIProtocol
       config_name?: string
+      persona_id?: number | null
+      persona_name?: string
       is_mock?: boolean
     }) => void
     onReasoning?: (chunk: string) => void
@@ -318,6 +464,8 @@ export async function streamAiChat(
       provider?: string
       protocol?: AIProtocol
       config_name?: string
+      persona_id?: number | null
+      persona_name?: string
       is_mock?: boolean
       content?: string
       message?: string
@@ -335,6 +483,8 @@ export async function streamAiChat(
         provider: payload.provider,
         protocol: payload.protocol,
         config_name: payload.config_name,
+        persona_id: payload.persona_id,
+        persona_name: payload.persona_name,
         is_mock: payload.is_mock,
       })
     } else if (payload.event === 'reasoning' && payload.content) {

@@ -1,6 +1,8 @@
 from app.models.admin_user import AdminUser
 from app.models.ai_chat import AIConversation, AIMessage
 from app.models.ai_model_config import AIModelConfig
+from app.models.ai_persona import AIPersona
+from app.models.ai_usage_log import AIUsageLog
 from app.models.audit_log import AuditLog
 from app.models.base import Base
 from app.models.login_log import LoginLog
@@ -18,6 +20,8 @@ __all__ = [
     "AIConversation",
     "AIMessage",
     "AIModelConfig",
+    "AIPersona",
+    "AIUsageLog",
     "SysRole",
     "SysConfig",
     "AuditLog",

@@ -19,7 +19,7 @@ from app.db.redis import cache_delete, cache_get_json, cache_set_json
 from app.models.ai_chat import AIConversation
 from app.models.ai_chat import AIMessage as DBAIMessage
 from app.schemas.ai import ChatRequest, ChatResponse
-from app.services import sys_config_service
+from app.services import ai_persona_service, ai_usage_service, sys_config_service
 from app.services.ai_config_service import RuntimeAIConfig, resolve_runtime_config
 from app.services.ai_providers import (
     BaseProviderAdapter,
@@ -415,16 +415,25 @@ class LLMService:
         await self.clear_history(session_id, owner)
         return deleted
 
-    def _extract_token_usage(self, msg: Any) -> int:
+    def _extract_token_breakdown(self, msg: Any) -> tuple[int, int, int]:
         usage = getattr(msg, "usage_metadata", None)
         if isinstance(usage, dict):
-            return int(usage.get("total_tokens", 0) or 0)
+            prompt_tok = int(usage.get("input_tokens", 0) or 0)
+            comp_tok = int(usage.get("output_tokens", 0) or 0)
+            total_tok = int(usage.get("total_tokens", 0) or 0)
+            return prompt_tok, comp_tok, total_tok or (prompt_tok + comp_tok)
         resp_meta = getattr(msg, "response_metadata", None)
         if isinstance(resp_meta, dict):
             tok = resp_meta.get("token_usage")
             if isinstance(tok, dict):
-                return int(tok.get("total_tokens", 0) or 0)
-        return 0
+                prompt_tok = int(tok.get("prompt_tokens", 0) or 0)
+                comp_tok = int(tok.get("completion_tokens", 0) or 0)
+                total_tok = int(tok.get("total_tokens", 0) or 0)
+                return prompt_tok, comp_tok, total_tok or (prompt_tok + comp_tok)
+        return 0, 0, 0
+
+    def _extract_token_usage(self, msg: Any) -> int:
+        return self._extract_token_breakdown(msg)[2]
 
     def _build_llm(
         self, cfg: RuntimeAIConfig, temperature: float, *, streaming: bool
@@ -471,26 +480,63 @@ class LLMService:
         effective_tz = (req_timezone or "").strip() or default_tz
         return inject_clock, effective_tz
 
+    async def _resolve_persona_and_quota(
+        self,
+        req: ChatRequest,
+        *,
+        owner: str,
+        role: str,
+        cfg: RuntimeAIConfig,
+    ) -> tuple[int | None, str, str, float]:
+        await ai_usage_service.check_daily_quota(owner, role)
+
+        persona_id: int | None = None
+        persona_name = ""
+        system_prompt = cfg.system_prompt
+        temperature = cfg.temperature
+
+        if req.persona_id is not None:
+            persona = await ai_persona_service.get_persona(req.persona_id, require_enabled=True)
+            persona_id = int(persona["id"])
+            persona_name = str(persona["name"])
+            if persona.get("system_prompt"):
+                system_prompt = str(persona["system_prompt"])
+            if persona.get("temperature") is not None:
+                temperature = float(persona["temperature"])
+
+        if req.system_prompt:
+            system_prompt = req.system_prompt
+        if req.temperature is not None:
+            temperature = req.temperature
+
+        return persona_id, persona_name, system_prompt, temperature
+
     async def chat(
         self,
         req: ChatRequest,
         *,
         user_type: str = "web",
         user_id: int = 0,
+        username: str = "",
+        role: str = "user",
     ) -> ChatResponse:
         inject_clock, effective_tz = await self._resolve_ai_runtime_policies(
             req.message, req.timezone
         )
         cfg = await resolve_runtime_config(config_id=req.config_id)
         owner = build_owner_scope(user_type, user_id)
+        persona_id, persona_name, system_prompt, temperature = (
+            await self._resolve_persona_and_quota(req, owner=owner, role=role, cfg=cfg)
+        )
         session_id = req.session_id or uuid.uuid4().hex
         history = await self.get_history(session_id, owner)
-        system_prompt = req.system_prompt or cfg.system_prompt
-        temperature = req.temperature if req.temperature is not None else cfg.temperature
 
         is_mock = not cfg.is_configured
         reasoning = ""
+        prompt_tokens = 0
+        completion_tokens = 0
         token_usage = 0
+        t0 = time.perf_counter()
 
         if is_mock:
             reply = self._build_mock_reply(cfg, req.message)
@@ -503,14 +549,29 @@ class LLMService:
                 tz_name=effective_tz,
                 inject_clock=inject_clock,
             )
-            t0 = time.perf_counter()
             try:
                 ai_msg = await llm.ainvoke(messages)
             except Exception as exc:
+                await ai_usage_service.record_usage(
+                    owner_scope=owner,
+                    user_type=user_type,
+                    user_id=user_id,
+                    username=username,
+                    session_id=session_id,
+                    persona_id=persona_id,
+                    persona_name=persona_name,
+                    provider=cfg.provider,
+                    model_name=cfg.model_name,
+                    latency_ms=max(1, int((time.perf_counter() - t0) * 1000)),
+                    is_stream=False,
+                    is_mock=False,
+                    call_status="failed",
+                )
                 raise self._wrap_llm_error(exc, cfg, t0) from exc
             reasoning, reply = adapter.extract_chunk_deltas(ai_msg)
-            token_usage = self._extract_token_usage(ai_msg)
+            prompt_tokens, completion_tokens, token_usage = self._extract_token_breakdown(ai_msg)
 
+        latency_ms = max(1, int((time.perf_counter() - t0) * 1000))
         history.append({"role": "user", "content": req.message})
         history.append({"role": "assistant", "content": reply})
         await self.save_history(session_id, history, owner, max_messages=cfg.max_history_messages)
@@ -523,6 +584,26 @@ class LLMService:
             assistant_content=reply,
             token_usage=token_usage,
         )
+        if persona_id is not None:
+            await ai_persona_service.increment_persona_usage(persona_id)
+        await ai_usage_service.record_usage(
+            owner_scope=owner,
+            user_type=user_type,
+            user_id=user_id,
+            username=username,
+            session_id=session_id,
+            persona_id=persona_id,
+            persona_name=persona_name,
+            provider=cfg.provider,
+            model_name=cfg.model_name,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=token_usage,
+            latency_ms=latency_ms,
+            is_stream=False,
+            is_mock=is_mock,
+            call_status="success",
+        )
 
         return ChatResponse(
             session_id=session_id,
@@ -533,6 +614,8 @@ class LLMService:
             protocol=cfg.protocol,
             config_id=cfg.id,
             config_name=cfg.name,
+            persona_id=persona_id,
+            persona_name=persona_name,
             is_mock=is_mock,
             history_length=len(history),
             token_usage=token_usage,
@@ -544,21 +627,27 @@ class LLMService:
         *,
         user_type: str = "web",
         user_id: int = 0,
-    ) -> tuple[str, RuntimeAIConfig, AsyncGenerator[tuple[str, str], None]]:
+        username: str = "",
+        role: str = "user",
+    ) -> tuple[str, RuntimeAIConfig, dict[str, Any], AsyncGenerator[tuple[str, str], None]]:
         """流式对话生成器，逐块产出 (event_type: 'reasoning' | 'delta' | 'usage', text_chunk)。"""
         inject_clock, effective_tz = await self._resolve_ai_runtime_policies(
             req.message, req.timezone
         )
         cfg = await resolve_runtime_config(config_id=req.config_id)
         owner = build_owner_scope(user_type, user_id)
+        persona_id, persona_name, system_prompt, temperature = (
+            await self._resolve_persona_and_quota(req, owner=owner, role=role, cfg=cfg)
+        )
         session_id = req.session_id or uuid.uuid4().hex
         history = await self.get_history(session_id, owner)
-        system_prompt = req.system_prompt or cfg.system_prompt
-        temperature = req.temperature if req.temperature is not None else cfg.temperature
 
         async def _generator() -> AsyncGenerator[tuple[str, str], None]:
             collected: list[str] = []
+            prompt_tokens = 0
+            completion_tokens = 0
             token_usage = 0
+            t0 = time.perf_counter()
             if not cfg.is_configured:
                 mock_text = self._build_mock_reply(cfg, req.message)
                 chunk_size = 8
@@ -576,7 +665,6 @@ class LLMService:
                     tz_name=effective_tz,
                     inject_clock=inject_clock,
                 )
-                t0 = time.perf_counter()
                 try:
                     async for chunk in llm.astream(messages):
                         reasoning_piece, content_piece = adapter.extract_chunk_deltas(chunk)
@@ -585,13 +673,31 @@ class LLMService:
                         if content_piece:
                             collected.append(content_piece)
                             yield "delta", content_piece
-                        # LangChain 约定各 chunk 的 usage_metadata 可累加（OpenAI 末块 / Anthropic 首末块）
-                        token_usage += self._extract_token_usage(chunk)
+                        p_tok, c_tok, t_tok = self._extract_token_breakdown(chunk)
+                        prompt_tokens += p_tok
+                        completion_tokens += c_tok
+                        token_usage += t_tok
                 except Exception as exc:
+                    await ai_usage_service.record_usage(
+                        owner_scope=owner,
+                        user_type=user_type,
+                        user_id=user_id,
+                        username=username,
+                        session_id=session_id,
+                        persona_id=persona_id,
+                        persona_name=persona_name,
+                        provider=cfg.provider,
+                        model_name=cfg.model_name,
+                        latency_ms=max(1, int((time.perf_counter() - t0) * 1000)),
+                        is_stream=True,
+                        is_mock=False,
+                        call_status="failed",
+                    )
                     raise self._wrap_llm_error(exc, cfg, t0) from exc
                 if token_usage:
                     yield "usage", str(token_usage)
 
+            latency_ms = max(1, int((time.perf_counter() - t0) * 1000))
             full_reply = "".join(collected)
             history.append({"role": "user", "content": req.message})
             history.append({"role": "assistant", "content": full_reply})
@@ -607,8 +713,28 @@ class LLMService:
                 assistant_content=full_reply,
                 token_usage=token_usage,
             )
+            if persona_id is not None:
+                await ai_persona_service.increment_persona_usage(persona_id)
+            await ai_usage_service.record_usage(
+                owner_scope=owner,
+                user_type=user_type,
+                user_id=user_id,
+                username=username,
+                session_id=session_id,
+                persona_id=persona_id,
+                persona_name=persona_name,
+                provider=cfg.provider,
+                model_name=cfg.model_name,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=token_usage,
+                latency_ms=latency_ms,
+                is_stream=True,
+                is_mock=not cfg.is_configured,
+                call_status="success",
+            )
 
-        return session_id, cfg, _generator()
+        return session_id, cfg, {"persona_id": persona_id, "persona_name": persona_name}, _generator()
 
 
 llm_service = LLMService()
