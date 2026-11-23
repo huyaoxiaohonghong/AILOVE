@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.deps import get_current_admin
+from app.api.deps import require_permissions
 from app.core.config import get_settings
 from app.core.exceptions import BusinessException
 from app.core.security import hash_password
@@ -20,8 +20,11 @@ from app.schemas.account import (
     AdminCreateAccountRequest,
 )
 from app.schemas.common import ok
+from app.schemas.system import AccountRoleUpdate
+from app.services import sys_config_service
 from app.services.auth_service import (
     admin_create_account,
+    admin_update_account_role,
     get_dev_fallback_users,
     validate_password_strength,
 )
@@ -41,7 +44,7 @@ async def list_accounts(
         default=None, description="email_register / admin_assigned / system_bootstrap"
     ),
     is_active: bool | None = Query(default=None),
-    _current_admin: dict[str, Any] = Depends(get_current_admin),
+    _current_admin: dict[str, Any] = Depends(require_permissions("account:view")),
 ):
     settings = get_settings()
     try:
@@ -159,18 +162,38 @@ async def list_accounts(
 @router.post("", summary="管理员分配创建新用户账号")
 async def create_account_by_admin(
     req: AdminCreateAccountRequest,
-    current_admin: dict[str, Any] = Depends(get_current_admin),
+    current_admin: dict[str, Any] = Depends(require_permissions("account:create")),
 ):
     creator_id = int(current_admin.get("sub", 0))
-    account = await admin_create_account(req, creator_admin_id=creator_id)
+    creator_role = str(current_admin.get("role", ""))
+    account = await admin_create_account(
+        req, creator_admin_id=creator_id, creator_role=creator_role
+    )
     return ok(account.model_dump(mode="json"), message="用户分配创建成功")
+
+
+@router.patch("/{user_id}/role", summary="调整平台账号的 RBAC 角色（变更后立即下线旧会话）")
+async def update_account_role(
+    user_id: int,
+    body: AccountRoleUpdate,
+    current_admin: dict[str, Any] = Depends(require_permissions("account:manage")),
+):
+    operator_id = int(current_admin.get("sub", 0))
+    operator_role = str(current_admin.get("role", ""))
+    result = await admin_update_account_role(
+        user_id,
+        body.role,
+        operator_id=operator_id,
+        operator_role=operator_role,
+    )
+    return ok(result, message=f"已调整角色为「{result['role_name']}」，原设备会话已刷新")
 
 
 @router.patch("/{user_id}/status", summary="启用或禁用用户账号（禁用时立即踢除所有在线终端）")
 async def update_account_status(
     user_id: int,
     body: AccountStatusUpdate,
-    current_admin: dict[str, Any] = Depends(get_current_admin),
+    current_admin: dict[str, Any] = Depends(require_permissions("account:manage")),
 ):
     if user_id == int(current_admin.get("sub", 0)) and not body.is_active:
         raise BusinessException("不能禁用当前正在登录的管理员自身账号", code=40030)
@@ -217,10 +240,12 @@ async def update_account_status(
 async def reset_account_password(
     user_id: int,
     body: AccountResetPasswordRequest,
-    _current_admin: dict[str, Any] = Depends(get_current_admin),
+    current_admin: dict[str, Any] = Depends(require_permissions("account:manage")),
 ):
-    validate_password_strength(body.new_password)
+    min_pwd_len = await sys_config_service.get_int("security.password_min_length", default=8)
+    validate_password_strength(body.new_password, min_length=min_pwd_len)
     new_hash = hash_password(body.new_password)
+    operator_role = str(current_admin.get("role", ""))
     settings = get_settings()
 
     try:
@@ -231,6 +256,8 @@ async def reset_account_password(
                 raise BusinessException(
                     "目标用户不存在", code=40401, status_code=status.HTTP_404_NOT_FOUND
                 )
+            if user.role == "super_admin" and operator_role != "super_admin":
+                raise BusinessException("无权重置超级管理员账号密码", code=40301, status_code=403)
             user.password_hash = new_hash
             await session.commit()
     except BusinessException:
@@ -242,6 +269,10 @@ async def reset_account_password(
             if item is None:
                 raise BusinessException(
                     "目标用户不存在", code=40401, status_code=status.HTTP_404_NOT_FOUND
+                ) from exc
+            if item["role"] == "super_admin" and operator_role != "super_admin":
+                raise BusinessException(
+                    "无权重置超级管理员账号密码", code=40301, status_code=403
                 ) from exc
             item["password_hash"] = new_hash
         else:
@@ -259,7 +290,7 @@ async def reset_account_password(
 @router.post("/{user_id}/kick", summary="管理员一键强制下线指定用户的全部在线设备")
 async def kick_account_sessions(
     user_id: int,
-    current_admin: dict[str, Any] = Depends(get_current_admin),
+    current_admin: dict[str, Any] = Depends(require_permissions("account:manage")),
 ):
     current_id = int(current_admin.get("sub", 0))
     if user_id == current_id:

@@ -83,6 +83,9 @@ export interface UserProfile {
   email: string
   nickname: string
   role: string
+  role_name?: string
+  is_admin_portal?: boolean
+  permissions?: string[]
   register_source: string
   email_provider: string
   email_trust_score: number

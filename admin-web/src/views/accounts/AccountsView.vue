@@ -1,19 +1,46 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import {
   adminCreateAccount,
   fetchAccounts,
   kickAccountSessions,
   resetAccountPassword,
+  updateAccountRole,
   updateAccountStatus,
   type AccountItem,
 } from '@/api/accounts'
 import { checkEmailPolicy, type EmailAnalysisResult } from '@/api/auth'
+import { fetchRbacRoles, type RbacRoleItem } from '@/api/rbac'
+import { useAuthStore } from '@/stores/auth'
+
+const authStore = useAuthStore()
+const canCreate = computed(() => authStore.hasPermission('account:create'))
+const canManage = computed(() => authStore.hasPermission('account:manage'))
 
 const loading = ref(false)
 const tableData = ref<AccountItem[]>([])
 const total = ref(0)
+
+const roleOptions = ref<Array<{ code: string; name: string; is_enabled: boolean }>>([
+  { code: 'super_admin', name: '超级管理员', is_enabled: true },
+  { code: 'admin', name: '系统管理员', is_enabled: true },
+  { code: 'operator', name: '运营审计员', is_enabled: true },
+  { code: 'user', name: '普通注册用户', is_enabled: true },
+])
+const assignableRoles = computed(() =>
+  roleOptions.value.filter(
+    (r) =>
+      r.is_enabled &&
+      (r.code !== 'super_admin' || authStore.user?.role === 'super_admin'),
+  ),
+)
+
+// 角色分配弹窗
+const roleDialogVisible = ref(false)
+const roleSaving = ref(false)
+const roleTarget = ref<AccountItem | null>(null)
+const roleSelected = ref('user')
 
 const query = reactive({
   page: 1,
@@ -36,7 +63,7 @@ const createForm = reactive({
   nickname: '',
   username: '',
   password: '',
-  role: 'user' as 'user' | 'admin',
+  role: 'user',
   allow_non_mainstream_email: false,
 })
 
@@ -188,8 +215,11 @@ async function handleKickUser(row: AccountItem) {
 }
 
 function roleLabel(role: string) {
+  const matched = roleOptions.value.find((r) => r.code === role)
+  if (matched) return matched.name
   if (role === 'super_admin') return '超级管理员'
-  if (role === 'admin') return '管理员'
+  if (role === 'admin') return '系统管理员'
+  if (role === 'operator') return '运营审计员'
   return '普通用户'
 }
 
@@ -199,7 +229,41 @@ function sourceLabel(source: string) {
   return '系统初始化'
 }
 
+async function loadRoleOptions() {
+  if (!authStore.hasPermission('rbac:role:view')) return
+  try {
+    const res = await fetchRbacRoles(false)
+    roleOptions.value = res.items.map((r: RbacRoleItem) => ({
+      code: r.code,
+      name: r.name,
+      is_enabled: r.is_enabled,
+    }))
+  } catch {
+    // 使用内置兜底角色列表
+  }
+}
+
+function openRoleDialog(row: AccountItem) {
+  roleTarget.value = row
+  roleSelected.value = row.role
+  roleDialogVisible.value = true
+}
+
+async function handleRoleSubmit() {
+  if (!roleTarget.value) return
+  roleSaving.value = true
+  try {
+    const res = await updateAccountRole(roleTarget.value.id, roleSelected.value)
+    ElMessage.success(`已调整为「${res.role_name}」，旧设备会话已刷新`)
+    roleDialogVisible.value = false
+    await loadAccounts()
+  } finally {
+    roleSaving.value = false
+  }
+}
+
 onMounted(() => {
+  void loadRoleOptions()
   void loadAccounts()
 })
 </script>
@@ -213,7 +277,7 @@ onMounted(() => {
           统一管理通过「正规邮箱自助注册」及「管理员直接分配」创建的平台账号与邮箱风控评分
         </p>
       </div>
-      <el-button type="primary" icon="Plus" @click="openCreateDialog">分配新用户</el-button>
+      <el-button v-if="canCreate" type="primary" icon="Plus" @click="openCreateDialog">分配新用户</el-button>
     </div>
 
     <div class="page-card">
@@ -234,10 +298,13 @@ onMounted(() => {
           </el-select>
         </el-form-item>
         <el-form-item label="角色">
-          <el-select v-model="query.role" placeholder="全部角色" clearable style="width: 130px">
-            <el-option label="普通用户" value="user" />
-            <el-option label="管理员" value="admin" />
-            <el-option label="超级管理员" value="super_admin" />
+          <el-select v-model="query.role" placeholder="全部角色" clearable style="width: 145px">
+            <el-option
+              v-for="r in roleOptions"
+              :key="r.code"
+              :label="r.name"
+              :value="r.code"
+            />
           </el-select>
         </el-form-item>
         <el-form-item>
@@ -335,8 +402,16 @@ onMounted(() => {
         <el-table-column prop="last_login_at" label="最近登录" width="175">
           <template #default="{ row }">{{ row.last_login_at || '-' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="215" fixed="right">
+        <el-table-column v-if="canManage" label="操作" width="265" fixed="right">
           <template #default="{ row }">
+            <el-button
+              v-if="row.id !== authStore.user?.id && (row.role !== 'super_admin' || authStore.user?.role === 'super_admin')"
+              link
+              type="primary"
+              @click="openRoleDialog(row)"
+            >
+              分配角色
+            </el-button>
             <el-button
               v-if="row.role !== 'super_admin'"
               link
@@ -411,10 +486,14 @@ onMounted(() => {
         </el-form-item>
 
         <el-form-item label="分配角色" prop="role">
-          <el-radio-group v-model="createForm.role">
-            <el-radio value="user">普通用户</el-radio>
-            <el-radio value="admin">管理员</el-radio>
-          </el-radio-group>
+          <el-select v-model="createForm.role" style="width: 100%">
+            <el-option
+              v-for="r in assignableRoles"
+              :key="r.code"
+              :label="`${r.name} (${r.code})`"
+              :value="r.code"
+            />
+          </el-select>
         </el-form-item>
 
         <el-form-item label="邮箱策略">
@@ -429,6 +508,26 @@ onMounted(() => {
         <el-button type="primary" :loading="creating" @click="handleCreateSubmit">
           确认分配创建
         </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="roleDialogVisible" title="调整账号 RBAC 角色" width="440px" destroy-on-close>
+      <template v-if="roleTarget">
+        <p class="role-tip">
+          为「<strong>{{ roleTarget.nickname }}</strong> ({{ roleTarget.email }})」分配新角色；保存后该用户当前在线设备会话将强制刷新。
+        </p>
+        <el-select v-model="roleSelected" style="width: 100%">
+          <el-option
+            v-for="r in assignableRoles"
+            :key="r.code"
+            :label="`${r.name} (${r.code})`"
+            :value="r.code"
+          />
+        </el-select>
+      </template>
+      <template #footer>
+        <el-button @click="roleDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="roleSaving" @click="handleRoleSubmit">确认调整</el-button>
       </template>
     </el-dialog>
   </div>
@@ -511,5 +610,12 @@ onMounted(() => {
   margin-top: 16px;
   display: flex;
   justify-content: flex-end;
+}
+
+.role-tip {
+  margin: 0 0 14px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ailove-ink-secondary);
 }
 </style>

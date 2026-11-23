@@ -130,3 +130,66 @@ CREATE TABLE IF NOT EXISTS `ai_model_configs` (
   PRIMARY KEY (`id`),
   KEY `idx_ai_model_configs_provider` (`provider`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI 模型配置表';
+
+CREATE TABLE IF NOT EXISTS `sys_roles` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `code` VARCHAR(32) NOT NULL COMMENT '角色唯一编码',
+  `name` VARCHAR(64) NOT NULL COMMENT '角色展示名称',
+  `description` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '角色职责说明',
+  `permissions` TEXT NOT NULL COMMENT '权限码列表 JSON',
+  `is_system` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否为系统内置角色',
+  `is_admin_portal` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否可访问管理后台',
+  `is_enabled` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用',
+  `sort_order` INT NOT NULL DEFAULT 100 COMMENT '排序权重',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_sys_roles_code` (`code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='RBAC 角色与权限表';
+
+CREATE TABLE IF NOT EXISTS `sys_configs` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `config_key` VARCHAR(64) NOT NULL COMMENT '配置键',
+  `group_name` VARCHAR(32) NOT NULL COMMENT '配置分组',
+  `label` VARCHAR(64) NOT NULL COMMENT '配置名称',
+  `value_type` VARCHAR(16) NOT NULL DEFAULT 'string' COMMENT '数据类型',
+  `config_value` TEXT NOT NULL COMMENT '当前生效值',
+  `default_value` TEXT NOT NULL COMMENT '默认值',
+  `description` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '配置说明',
+  `is_public` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否向公共接口公开',
+  `is_secret` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否敏感参数',
+  `sort_order` INT NOT NULL DEFAULT 100 COMMENT '排序权重',
+  `updated_by` BIGINT UNSIGNED NULL COMMENT '最后修改管理员ID',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_sys_configs_key` (`config_key`),
+  KEY `idx_sys_configs_group` (`group_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='动态系统配置表';
+
+CREATE TABLE IF NOT EXISTS `audit_logs` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `request_id` VARCHAR(36) NOT NULL COMMENT '请求链路ID',
+  `user_id` BIGINT UNSIGNED NULL COMMENT '操作人用户ID',
+  `username` VARCHAR(128) NOT NULL DEFAULT 'anonymous' COMMENT '操作人标识',
+  `role` VARCHAR(32) NOT NULL DEFAULT 'anonymous' COMMENT '操作人角色',
+  `module` VARCHAR(32) NOT NULL COMMENT '业务模块',
+  `action` VARCHAR(64) NOT NULL COMMENT '操作语义',
+  `method` VARCHAR(10) NOT NULL COMMENT 'HTTP 方法',
+  `path` VARCHAR(255) NOT NULL COMMENT '请求路径',
+  `status_code` INT NOT NULL COMMENT 'HTTP 状态码',
+  `result` VARCHAR(16) NOT NULL DEFAULT 'success' COMMENT 'success / denied / error',
+  `ip` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '客户端IP',
+  `device_label` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '设备标签',
+  `duration_ms` INT NOT NULL DEFAULT 0 COMMENT '请求耗时(ms)',
+  `request_summary` TEXT NOT NULL COMMENT '脱敏请求参数摘要 JSON',
+  `error_message` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '错误摘要',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_audit_logs_request_id` (`request_id`),
+  KEY `idx_audit_logs_user_id` (`user_id`),
+  KEY `idx_audit_logs_module` (`module`),
+  KEY `idx_audit_logs_result_status` (`result`, `status_code`),
+  KEY `idx_audit_logs_created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统操作审计日志表';

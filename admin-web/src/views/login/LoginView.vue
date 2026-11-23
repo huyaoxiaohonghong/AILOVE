@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import {
@@ -9,11 +9,18 @@ import {
 } from '@/api/auth'
 import BrandLogo from '@/components/BrandLogo.vue'
 import SliderCaptcha from '@/components/SliderCaptcha.vue'
+import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
+const appStore = useAppStore()
 const authStore = useAuthStore()
+
+const publicCfg = computed(() => appStore.publicConfig)
+const registrationAllowed = computed(
+  () => publicCfg.value.registration_enabled && !publicCfg.value.maintenance_mode,
+)
 
 const activeTab = ref<'login' | 'register'>('login')
 const submitting = ref(false)
@@ -110,42 +117,22 @@ async function handleCheckEmail() {
   }
 }
 
-async function handleOpenLoginCaptcha() {
-  const valid = await loginFormRef.value?.validate().catch(() => false)
-  if (!valid) return
-  captchaScene.value = 'login'
-  captchaDialogVisible.value = true
-}
-
-async function handleOpenRegisterCaptcha() {
-  const valid = await registerFormRef.value?.validate().catch(() => false)
-  if (!valid) return
-
-  const normalized = registerForm.email.trim().toLowerCase()
-  if (!emailCheckResult.value || emailCheckResult.value.email !== normalized) {
-    await handleCheckEmail()
-  }
-  if (emailCheckResult.value && !emailCheckResult.value.allowed) {
-    ElMessage.error(emailCheckResult.value.summary)
-    return
-  }
-
-  captchaScene.value = 'register'
-  captchaDialogVisible.value = true
-}
-
-async function handleCaptchaVerified(payload: { token: string; humanScore: number }) {
+async function submitAuthWithToken(scene: CaptchaScene, captchaToken: string) {
   submitting.value = true
   try {
-    if (captchaScene.value === 'login') {
+    if (scene === 'login') {
       const res = await authStore.login(
         loginForm.account.trim(),
         loginForm.password,
-        payload.token,
+        captchaToken,
       )
       captchaDialogVisible.value = false
       ElMessage.success(`欢迎回来，${res.user.nickname}`)
-      const isAdmin = res.user.role === 'super_admin' || res.user.role === 'admin'
+      const isAdmin =
+        Boolean(res.user.is_admin_portal) ||
+        res.user.role === 'super_admin' ||
+        res.user.role === 'admin' ||
+        res.user.role === 'operator'
       const redirect =
         typeof route.query.redirect === 'string' &&
         (isAdmin || route.query.redirect === '/profile')
@@ -159,10 +146,10 @@ async function handleCaptchaVerified(payload: { token: string; humanScore: numbe
         email: registerForm.email.trim(),
         password: registerForm.password,
         nickname: registerForm.nickname.trim() || undefined,
-        captcha_token: payload.token,
+        captcha_token: captchaToken,
       })
       captchaDialogVisible.value = false
-      ElMessage.success(`注册成功，欢迎加入 AILOVE，${res.user.nickname}`)
+      ElMessage.success(`注册成功，欢迎加入 ${publicCfg.value.site_name || 'AILOVE'}，${res.user.nickname}`)
       await router.replace('/profile')
     }
   } catch {
@@ -171,6 +158,53 @@ async function handleCaptchaVerified(payload: { token: string; humanScore: numbe
     submitting.value = false
   }
 }
+
+async function handleOpenLoginCaptcha() {
+  const valid = await loginFormRef.value?.validate().catch(() => false)
+  if (!valid) return
+  if (!publicCfg.value.slider_captcha_enabled) {
+    await submitAuthWithToken('login', '')
+    return
+  }
+  captchaScene.value = 'login'
+  captchaDialogVisible.value = true
+}
+
+async function handleOpenRegisterCaptcha() {
+  if (!registrationAllowed.value) {
+    ElMessage.warning('当前未开放自助注册，请联系管理员分配账号')
+    return
+  }
+  const valid = await registerFormRef.value?.validate().catch(() => false)
+  if (!valid) return
+
+  const normalized = registerForm.email.trim().toLowerCase()
+  if (!emailCheckResult.value || emailCheckResult.value.email !== normalized) {
+    await handleCheckEmail()
+  }
+  if (emailCheckResult.value && !emailCheckResult.value.allowed) {
+    ElMessage.error(emailCheckResult.value.summary)
+    return
+  }
+
+  if (!publicCfg.value.slider_captcha_enabled) {
+    await submitAuthWithToken('register', '')
+    return
+  }
+  captchaScene.value = 'register'
+  captchaDialogVisible.value = true
+}
+
+async function handleCaptchaVerified(payload: { token: string; humanScore: number }) {
+  await submitAuthWithToken(captchaScene.value, payload.token)
+}
+
+onMounted(async () => {
+  await appStore.loadPublicConfig()
+  if (!registrationAllowed.value) {
+    activeTab.value = 'login'
+  }
+})
 
 function fillDefaultAdmin() {
   activeTab.value = 'login'
@@ -227,15 +261,24 @@ function fillDefaultAdmin() {
         </div>
 
         <div class="form-head">
-          <h2>{{ activeTab === 'login' ? '欢迎回到 AILOVE' : '创建你的 AILOVE 账号' }}</h2>
+          <h2>{{ activeTab === 'login' ? `欢迎回到 ${publicCfg.site_name || 'AILOVE'}` : `创建你的 ${publicCfg.site_name || 'AILOVE'} 账号` }}</h2>
           <p>
             {{
               activeTab === 'login'
-                ? '使用注册邮箱或管理员账号登录，单次会话 24 小时自动守护'
+                ? '使用注册邮箱或管理员账号登录，支持多点会话与安全审计守护'
                 : '仅支持正规公共邮箱注册，点击提交后完成拼图滑动验证'
             }}
           </p>
         </div>
+
+        <el-alert
+          v-if="publicCfg.maintenance_mode"
+          title="系统当前正处于维护模式，暂仅限管理角色登录，已暂停新用户注册。"
+          type="warning"
+          show-icon
+          :closable="false"
+          style="margin-bottom: 16px"
+        />
 
         <!-- 精致胶囊分段切换器 -->
         <div class="segmented-switch" role="tablist">
@@ -250,6 +293,7 @@ function fillDefaultAdmin() {
             账号登录
           </button>
           <button
+            v-if="registrationAllowed"
             type="button"
             role="tab"
             :aria-selected="activeTab === 'register'"

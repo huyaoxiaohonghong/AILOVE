@@ -15,6 +15,7 @@ from app.schemas.auth import (
     UpdateProfileRequest,
 )
 from app.schemas.common import ok
+from app.services import sys_config_service
 from app.services.auth_service import (
     change_own_password,
     get_fresh_user_profile,
@@ -74,13 +75,20 @@ async def web_me(current_user: dict[str, Any] = Depends(get_current_web_user)):
     current_sess = next((s for s in sessions if s["is_current"]), None)
 
     data = profile.model_dump()
+    ttl_hours = await sys_config_service.get_int(
+        "security.session_ttl_hours",
+        default=max(1, settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES // 60),
+    )
+    max_sessions = await sys_config_service.get_int(
+        "security.max_sessions_per_user", default=settings.MAX_SESSIONS_PER_USER
+    )
     data["session"] = {
         "session_id": current_jti,
         "expires_at": current_sess["expires_at"] if current_sess else "",
         "remaining_seconds": current_sess["remaining_seconds"] if current_sess else 0,
         "online_count": len(sessions),
-        "max_sessions": settings.MAX_SESSIONS_PER_USER,
-        "ttl_hours": round(settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES / 60, 1),
+        "max_sessions": max_sessions,
+        "ttl_hours": round(float(ttl_hours), 1),
     }
     return ok(data)
 
@@ -114,18 +122,25 @@ async def change_password(
     return ok(result, message="密码修改成功")
 
 
-@router.get("/sessions", summary="查看当前账号全部多点在线设备及 24 小时到期时间")
+@router.get("/sessions", summary="查看当前账号全部多点在线设备及会话到期时间")
 async def list_my_sessions(current_user: dict[str, Any] = Depends(get_current_web_user)):
     settings = get_settings()
     user_id = int(current_user.get("sub", 0))
     current_jti = str(current_user.get("jti", ""))
     sessions = await session_service.list_user_sessions(user_id, current_jti=current_jti)
+    ttl_hours = await sys_config_service.get_int(
+        "security.session_ttl_hours",
+        default=max(1, settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES // 60),
+    )
+    max_sessions = await sys_config_service.get_int(
+        "security.max_sessions_per_user", default=settings.MAX_SESSIONS_PER_USER
+    )
     return ok(
         {
             "items": sessions,
             "online_count": len(sessions),
-            "max_sessions": settings.MAX_SESSIONS_PER_USER,
-            "ttl_hours": round(settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES / 60, 1),
+            "max_sessions": max_sessions,
+            "ttl_hours": round(float(ttl_hours), 1),
         }
     )
 

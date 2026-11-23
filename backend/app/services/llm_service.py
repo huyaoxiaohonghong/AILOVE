@@ -19,6 +19,7 @@ from app.db.redis import cache_delete, cache_get_json, cache_set_json
 from app.models.ai_chat import AIConversation
 from app.models.ai_chat import AIMessage as DBAIMessage
 from app.schemas.ai import ChatRequest, ChatResponse
+from app.services import sys_config_service
 from app.services.ai_config_service import RuntimeAIConfig, resolve_runtime_config
 from app.services.ai_providers import (
     BaseProviderAdapter,
@@ -108,12 +109,18 @@ class LLMService:
         history: list[dict[str, str]],
         user_input: str,
         tz_name: str | None = None,
+        *,
+        inject_clock: bool = True,
     ) -> list[BaseMessage]:
         messages: list[BaseMessage] = []
-        clock_prompt = build_realtime_clock_prompt(tz_name)
         base_prompt = system_prompt.strip()
-        full_system = f"{base_prompt}\n\n{clock_prompt}" if base_prompt else clock_prompt
-        messages.append(SystemMessage(content=full_system))
+        if inject_clock:
+            clock_prompt = build_realtime_clock_prompt(tz_name)
+            full_system = f"{base_prompt}\n\n{clock_prompt}" if base_prompt else clock_prompt
+        else:
+            full_system = base_prompt
+        if full_system:
+            messages.append(SystemMessage(content=full_system))
         for item in history:
             role = item.get("role")
             content = item.get("content", "")
@@ -227,6 +234,20 @@ class LLMService:
         )
         return BusinessException(friendly, code=50201, status_code=502)
 
+    async def _resolve_ai_runtime_policies(
+        self, message: str, req_timezone: str | None
+    ) -> tuple[bool, str]:
+        max_len = await sys_config_service.get_int("ai.max_message_length", default=4000)
+        if len(message) > max_len:
+            raise BusinessException(
+                f"单条提问内容不能超过 {max_len} 字符（当前 {len(message)} 字符）",
+                code=40051,
+            )
+        inject_clock = await sys_config_service.get_bool("ai.inject_realtime_clock", default=True)
+        default_tz = await sys_config_service.get_str("ai.default_timezone", default="Asia/Shanghai")
+        effective_tz = (req_timezone or "").strip() or default_tz
+        return inject_clock, effective_tz
+
     async def chat(
         self,
         req: ChatRequest,
@@ -234,6 +255,9 @@ class LLMService:
         user_type: str = "web",
         user_id: int = 0,
     ) -> ChatResponse:
+        inject_clock, effective_tz = await self._resolve_ai_runtime_policies(
+            req.message, req.timezone
+        )
         cfg = await resolve_runtime_config(config_id=req.config_id)
         owner = build_owner_scope(user_type, user_id)
         session_id = req.session_id or uuid.uuid4().hex
@@ -250,7 +274,11 @@ class LLMService:
         else:
             adapter, llm = self._build_llm(cfg, temperature, streaming=False)
             messages = self._build_messages(
-                system_prompt, history, req.message, tz_name=req.timezone
+                system_prompt,
+                history,
+                req.message,
+                tz_name=effective_tz,
+                inject_clock=inject_clock,
             )
             t0 = time.perf_counter()
             try:
@@ -295,6 +323,9 @@ class LLMService:
         user_id: int = 0,
     ) -> tuple[str, RuntimeAIConfig, AsyncGenerator[tuple[str, str], None]]:
         """流式对话生成器，逐块产出 (event_type: 'reasoning' | 'delta' | 'usage', text_chunk)。"""
+        inject_clock, effective_tz = await self._resolve_ai_runtime_policies(
+            req.message, req.timezone
+        )
         cfg = await resolve_runtime_config(config_id=req.config_id)
         owner = build_owner_scope(user_type, user_id)
         session_id = req.session_id or uuid.uuid4().hex
@@ -316,7 +347,11 @@ class LLMService:
             else:
                 adapter, llm = self._build_llm(cfg, temperature, streaming=True)
                 messages = self._build_messages(
-                    system_prompt, history, req.message, tz_name=req.timezone
+                    system_prompt,
+                    history,
+                    req.message,
+                    tz_name=effective_tz,
+                    inject_clock=inject_clock,
                 )
                 t0 = time.perf_counter()
                 try:

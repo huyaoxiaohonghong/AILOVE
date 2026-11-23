@@ -138,9 +138,23 @@ class SessionService:
         ttl_seconds: int | None = None,
     ) -> dict[str, Any]:
         """创建新的设备会话；超出多点登录设备上限时自动按 FIFO 淘汰最早登录的会话。"""
+        from app.services import sys_config_service
+
         settings = get_settings()
-        ttl = ttl_seconds or (settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60)
-        max_sessions = max(1, settings.MAX_SESSIONS_PER_USER)
+        if ttl_seconds is not None:
+            ttl = ttl_seconds
+        else:
+            ttl_hours = await sys_config_service.get_int(
+                "security.session_ttl_hours",
+                default=max(1, settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES // 60),
+            )
+            ttl = ttl_hours * 3600
+        max_sessions = max(
+            1,
+            await sys_config_service.get_int(
+                "security.max_sessions_per_user", default=settings.MAX_SESSIONS_PER_USER
+            ),
+        )
 
         existing = await self.list_user_sessions(user_id)
         if len(existing) >= max_sessions:
@@ -321,9 +335,22 @@ class LoginRateLimiter:
 
     async def record_failure(self, account_key: str) -> tuple[int, bool, int]:
         """记录一次密码错误，返回 (当前失败次数, 是否刚触发锁定, 剩余可尝试次数)。"""
+        from app.services import sys_config_service
+
         settings = get_settings()
-        max_fails = max(1, settings.LOGIN_MAX_FAIL_ATTEMPTS)
-        lock_seconds = max(60, settings.LOGIN_LOCK_MINUTES * 60)
+        max_fails = max(
+            1,
+            await sys_config_service.get_int(
+                "security.login_max_fail_attempts", default=settings.LOGIN_MAX_FAIL_ATTEMPTS
+            ),
+        )
+        lock_minutes = max(
+            1,
+            await sys_config_service.get_int(
+                "security.login_lock_minutes", default=settings.LOGIN_LOCK_MINUTES
+            ),
+        )
+        lock_seconds = max(60, lock_minutes * 60)
         key = account_key.strip().lower()
 
         try:

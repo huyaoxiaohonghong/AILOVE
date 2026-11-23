@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.deps import get_current_admin
+from app.api.deps import require_permissions
 from app.core.exceptions import BusinessException
 from app.db.mysql import get_session_factory
 from app.models.wechat_user import WechatUser
@@ -24,7 +24,7 @@ async def list_wechat_users(
     page_size: int = Query(default=10, ge=1, le=100, description="每页数量"),
     keyword: str | None = Query(default=None, description="昵称/OpenID/手机号搜索"),
     user_status: int | None = Query(default=None, alias="status", ge=0, le=1),
-    _current_admin: dict[str, Any] = Depends(get_current_admin),
+    _current_admin: dict[str, Any] = Depends(require_permissions("miniapp_user:view")),
 ):
     try:
         factory = get_session_factory()
@@ -90,7 +90,7 @@ async def list_wechat_users(
 async def update_wechat_user_status(
     user_id: int,
     body: WechatUserStatusUpdate,
-    _current_admin: dict[str, Any] = Depends(get_current_admin),
+    _current_admin: dict[str, Any] = Depends(require_permissions("miniapp_user:manage")),
 ):
     try:
         factory = get_session_factory()

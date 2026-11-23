@@ -9,21 +9,21 @@ class EmailCheckRequest(BaseModel):
 
 class EmailRegisterRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=254, description="正规公共邮箱地址")
-    password: str = Field(..., min_length=8, max_length=128, description="登录密码（至少8位且含字母与数字）")
+    password: str = Field(..., min_length=6, max_length=128, description="登录密码（须含字母与数字）")
     nickname: str | None = Field(default=None, max_length=64, description="用户昵称（可选）")
-    captcha_token: str = Field(..., min_length=16, max_length=128, description="滑动验证通过后的一次性票据")
+    captcha_token: str = Field(default="", max_length=128, description="滑动验证通过后的一次性票据")
 
 
 class AccountLoginRequest(BaseModel):
     account: str = Field(..., min_length=2, max_length=254, description="邮箱或管理员用户名")
     password: str = Field(..., min_length=6, max_length=128, description="登录密码")
-    captcha_token: str = Field(..., min_length=16, max_length=128, description="滑动验证通过后的一次性票据")
+    captcha_token: str = Field(default="", max_length=128, description="滑动验证通过后的一次性票据")
 
 
 class AdminLoginRequest(BaseModel):
     username: str = Field(..., min_length=2, max_length=254, description="管理员用户名或邮箱")
     password: str = Field(..., min_length=6, max_length=128, description="登录密码")
-    captcha_token: str = Field(..., min_length=16, max_length=128, description="滑动验证通过后的一次性票据")
+    captcha_token: str = Field(default="", max_length=128, description="滑动验证通过后的一次性票据")
 
 
 class UserProfile(BaseModel):
@@ -32,6 +32,9 @@ class UserProfile(BaseModel):
     email: str
     nickname: str
     role: str
+    role_name: str = ""
+    is_admin_portal: bool = False
+    permissions: list[str] = Field(default_factory=list)
     register_source: str = "email_register"
     email_provider: str = ""
     email_trust_score: int = 100
@@ -54,7 +57,7 @@ class UpdateProfileRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     current_password: str = Field(..., min_length=6, max_length=128, description="当前密码")
     new_password: str = Field(
-        ..., min_length=8, max_length=128, description="新密码（至少8位且含字母与数字）"
+        ..., min_length=6, max_length=128, description="新密码（须含字母与数字）"
     )
     logout_other_devices: bool = Field(
         default=True, description="修改密码后是否自动下线其他在线设备"

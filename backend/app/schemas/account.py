@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -25,10 +24,15 @@ class AccountItem(BaseModel):
 
 class AdminCreateAccountRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=254, description="用户邮箱")
-    password: str = Field(..., min_length=8, max_length=128, description="初始密码（至少8位且含字母与数字）")
+    password: str = Field(..., min_length=6, max_length=128, description="初始密码（须含字母与数字）")
     nickname: str = Field(..., min_length=1, max_length=64, description="用户昵称")
     username: str | None = Field(default=None, max_length=64, description="可选登录用户名")
-    role: Literal["user", "admin"] = Field(default="user", description="分配角色: user / admin")
+    role: str = Field(
+        default="user",
+        min_length=2,
+        max_length=32,
+        description="分配角色编码（如 user / admin / operator 或自定义角色）",
+    )
     allow_non_mainstream_email: bool = Field(
         default=False,
         description="管理员特权：是否允许为内部成员分配非常规/域名邮箱",
@@ -41,5 +45,5 @@ class AccountStatusUpdate(BaseModel):
 
 class AccountResetPasswordRequest(BaseModel):
     new_password: str = Field(
-        ..., min_length=8, max_length=128, description="新密码（至少8位且含字母与数字）"
+        ..., min_length=6, max_length=128, description="新密码（须含字母与数字）"
     )

@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 from fastapi import status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from app.core.config import get_settings
@@ -28,6 +28,7 @@ from app.schemas.auth import (
     WxLoginRequest,
     WxLoginResponse,
 )
+from app.services import rbac_service, sys_config_service
 from app.services.captcha_service import slider_captcha_engine
 from app.services.email_validator import email_trust_analyzer
 from app.services.session_service import (
@@ -64,10 +65,11 @@ def _ensure_dev_fallback_seed() -> None:
         }
 
 
-def validate_password_strength(password: str) -> None:
-    """密码强度校验：至少 8 位，同时包含字母和数字。"""
-    if len(password) < 8:
-        raise BusinessException("密码长度至少为 8 位", code=40021)
+def validate_password_strength(password: str, *, min_length: int = 8) -> None:
+    """密码强度校验：满足动态配置的最小长度，且同时包含字母和数字。"""
+    min_len = max(6, int(min_length))
+    if len(password) < min_len:
+        raise BusinessException(f"密码长度至少为 {min_len} 位", code=40021)
     if not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
         raise BusinessException("密码必须同时包含字母和数字", code=40022)
 
@@ -86,32 +88,51 @@ def _to_user_profile(user: User, auth_mode: str = "mysql") -> UserProfile:
     )
 
 
+async def _enrich_profile_rbac(profile: UserProfile) -> UserProfile:
+    """为 UserProfile 注入实时 RBAC 角色名称、管理入口标识与权限点列表。"""
+    meta = await rbac_service.get_role_meta(profile.role)
+    return profile.model_copy(
+        update={
+            "role_name": str(meta.get("name") or profile.role),
+            "is_admin_portal": bool(meta.get("is_admin_portal")),
+            "permissions": list(meta.get("permissions") or []),
+        }
+    )
+
+
 async def _issue_web_token(
     profile: UserProfile,
     *,
     client_ip: str = "",
     user_agent: str = "",
 ) -> AuthTokenResponse:
-    """签发 24 小时有效期 JWT 并在 Redis 注册多点设备会话。"""
-    is_admin = profile.role in {"super_admin", "admin"}
+    """签发动态有效期的 JWT 并在 Redis 注册多点设备会话。"""
+    settings = get_settings()
+    enriched = await _enrich_profile_rbac(profile)
+    ttl_hours = await sys_config_service.get_int(
+        "security.session_ttl_hours",
+        default=max(1, settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES // 60),
+    )
+    expire_minutes = max(1, ttl_hours) * 60
     access_token, expires_in, jti = create_access_token(
-        subject=str(profile.id),
-        user_type="admin" if is_admin else "user",
+        subject=str(enriched.id),
+        user_type="admin" if enriched.is_admin_portal else "user",
+        expires_minutes=expire_minutes,
         extra={
-            "username": profile.username or "",
-            "email": profile.email,
-            "nickname": profile.nickname,
-            "role": profile.role,
-            "register_source": profile.register_source,
-            "email_provider": profile.email_provider,
-            "email_trust_score": profile.email_trust_score,
-            "auth_mode": profile.auth_mode,
+            "username": enriched.username or "",
+            "email": enriched.email,
+            "nickname": enriched.nickname,
+            "role": enriched.role,
+            "register_source": enriched.register_source,
+            "email_provider": enriched.email_provider,
+            "email_trust_score": enriched.email_trust_score,
+            "auth_mode": enriched.auth_mode,
         },
     )
     sess = await session_service.create_session(
-        user_id=profile.id,
+        user_id=enriched.id,
         jti=jti,
-        role=profile.role,
+        role=enriched.role,
         ip=client_ip,
         user_agent=user_agent,
         ttl_seconds=expires_in,
@@ -121,7 +142,7 @@ async def _issue_web_token(
         expires_in=expires_in,
         session_id=jti,
         expires_at=str(sess.get("expires_at", "")),
-        user=profile,
+        user=enriched,
     )
 
 
@@ -194,13 +215,30 @@ async def register_user_by_email(
     client_ip: str = "",
     user_agent: str = "",
 ) -> AuthTokenResponse:
-    """用户邮箱自助注册：强制校验一次性滑动验证票据 + 六层正规邮箱识别算法 + 归一化防重。"""
+    """用户邮箱自助注册：结合系统动态策略校验滑动验证 + 正规邮箱算法 + 归一化防重。"""
     settings = get_settings()
 
-    await _consume_captcha_or_raise(req.captcha_token, scene="register")
+    if await sys_config_service.get_bool("site.maintenance_mode", default=False):
+        raise BusinessException(
+            "系统当前正在维护中，暂不开放新用户注册",
+            code=50305,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+    if not await sys_config_service.get_bool("registration.enabled", default=True):
+        raise BusinessException(
+            "管理员已关闭邮箱自助注册，请联系管理员分配账号",
+            code=40305,
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
 
+    if await sys_config_service.get_bool("registration.slider_captcha_enabled", default=True):
+        await _consume_captcha_or_raise(req.captcha_token, scene="register")
+
+    strict_email = await sys_config_service.get_bool(
+        "registration.strict_email_policy", default=True
+    )
     analysis = await email_trust_analyzer.analyze(
-        req.email, check_mx=True, strict_registration=True
+        req.email, check_mx=True, strict_registration=strict_email
     )
     if not analysis.allowed:
         raise BusinessException(
@@ -209,7 +247,8 @@ async def register_user_by_email(
             status_code=status.HTTP_400_BAD_REQUEST,
         )
 
-    validate_password_strength(req.password)
+    min_pwd_len = await sys_config_service.get_int("security.password_min_length", default=8)
+    validate_password_strength(req.password, min_length=min_pwd_len)
 
     nickname = (req.nickname or "").strip() or analysis.email.split("@", 1)[0][:32]
     pwd_hash = hash_password(req.password)
@@ -355,8 +394,9 @@ async def login_account(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         )
 
-    # 2. 滑动验证一次性票据校验
-    await _consume_captcha_or_raise(captcha_token, scene="login")
+    # 2. 滑动验证一次性票据校验（受系统配置动态控制）
+    if await sys_config_service.get_bool("registration.slider_captcha_enabled", default=True):
+        await _consume_captcha_or_raise(captcha_token, scene="login")
 
     canonical_lookup = acct_lower
     if "@" in acct_lower:
@@ -376,8 +416,11 @@ async def login_account(
             fail_reason=reason,
         )
         if just_locked:
+            lock_mins = await sys_config_service.get_int(
+                "security.login_lock_minutes", default=settings.LOGIN_LOCK_MINUTES
+            )
             raise BusinessException(
-                f"密码连续错误达到上限，账号已锁定 {settings.LOGIN_LOCK_MINUTES} 分钟",
+                f"密码连续错误达到上限，账号已锁定 {lock_mins} 分钟",
                 code=42901,
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             )
@@ -386,6 +429,36 @@ async def login_account(
             code=40101,
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
+
+    async def _validate_role_access(role_code: str, target_uid: int) -> None:
+        role_meta = await rbac_service.get_role_meta(role_code)
+        if not role_meta.get("is_enabled"):
+            await record_login_log(
+                user_id=target_uid,
+                account=acct,
+                ip=client_ip,
+                user_agent=user_agent,
+                status="failed",
+                fail_reason=f"所属角色 {role_code} 已禁用",
+            )
+            raise BusinessException(
+                "所属账号角色已被禁用，请联系管理员",
+                code=40301,
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+        if require_admin and not role_meta.get("is_admin_portal"):
+            raise BusinessException(
+                "该账号无管理后台访问权限",
+                code=40300,
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+        if await sys_config_service.get_bool("site.maintenance_mode", default=False):
+            if not role_meta.get("is_admin_portal"):
+                raise BusinessException(
+                    "系统正在维护中，暂仅限管理角色登录",
+                    code=50305,
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
 
     try:
         factory = get_session_factory()
@@ -419,12 +492,7 @@ async def login_account(
                     code=40301,
                     status_code=status.HTTP_403_FORBIDDEN,
                 )
-            if require_admin and user.role not in {"super_admin", "admin"}:
-                raise BusinessException(
-                    "该账号无管理员权限",
-                    code=40300,
-                    status_code=status.HTTP_403_FORBIDDEN,
-                )
+            await _validate_role_access(user.role, user.id)
 
             await login_rate_limiter.clear_failures(acct_lower)
             user.last_login_at = datetime.now(UTC).replace(tzinfo=None)
@@ -480,12 +548,7 @@ async def login_account(
                 code=40301,
                 status_code=status.HTTP_403_FORBIDDEN,
             ) from exc
-        if require_admin and matched["role"] not in {"super_admin", "admin"}:
-            raise BusinessException(
-                "该账号无管理员权限",
-                code=40300,
-                status_code=status.HTTP_403_FORBIDDEN,
-            ) from exc
+        await _validate_role_access(matched["role"], matched["id"])
 
         await login_rate_limiter.clear_failures(acct_lower)
         matched["last_login_at"] = datetime.now(UTC).replace(tzinfo=None)
@@ -513,38 +576,42 @@ async def login_account(
 async def get_fresh_user_profile(
     user_id: int, fallback_payload: dict[str, Any]
 ) -> UserProfile:
-    """优先从数据库加载最新个人资料（确保跨设备修改昵称后实时同步）。"""
+    """优先从数据库加载最新个人资料（确保跨设备修改昵称或变更角色后实时同步权限）。"""
     try:
         factory = get_session_factory()
         async with factory() as session:
             user = await session.get(User, user_id)
             if user is not None:
-                return _to_user_profile(user, auth_mode="mysql")
+                return await _enrich_profile_rbac(_to_user_profile(user, auth_mode="mysql"))
     except (SQLAlchemyError, OSError):
         mem = get_dev_fallback_users().get(user_id)
         if mem is not None:
-            return UserProfile(
-                id=mem["id"],
-                username=mem["username"],
-                email=mem["email"],
-                nickname=mem["nickname"],
-                role=mem["role"],
-                register_source=mem["register_source"],
-                email_provider=mem["email_provider"],
-                email_trust_score=mem["email_trust_score"],
-                auth_mode="dev-fallback",
+            return await _enrich_profile_rbac(
+                UserProfile(
+                    id=mem["id"],
+                    username=mem["username"],
+                    email=mem["email"],
+                    nickname=mem["nickname"],
+                    role=mem["role"],
+                    register_source=mem["register_source"],
+                    email_provider=mem["email_provider"],
+                    email_trust_score=mem["email_trust_score"],
+                    auth_mode="dev-fallback",
+                )
             )
 
-    return UserProfile(
-        id=user_id,
-        username=str(fallback_payload.get("username", "")) or None,
-        email=str(fallback_payload.get("email", "")),
-        nickname=str(fallback_payload.get("nickname", "")),
-        role=str(fallback_payload.get("role", "user")),
-        register_source=str(fallback_payload.get("register_source", "email_register")),
-        email_provider=str(fallback_payload.get("email_provider", "")),
-        email_trust_score=int(fallback_payload.get("email_trust_score", 100)),
-        auth_mode=str(fallback_payload.get("auth_mode", "mysql")),
+    return await _enrich_profile_rbac(
+        UserProfile(
+            id=user_id,
+            username=str(fallback_payload.get("username", "")) or None,
+            email=str(fallback_payload.get("email", "")),
+            nickname=str(fallback_payload.get("nickname", "")),
+            role=str(fallback_payload.get("role", "user")),
+            register_source=str(fallback_payload.get("register_source", "email_register")),
+            email_provider=str(fallback_payload.get("email_provider", "")),
+            email_trust_score=int(fallback_payload.get("email_trust_score", 100)),
+            auth_mode=str(fallback_payload.get("auth_mode", "mysql")),
+        )
     )
 
 
@@ -565,7 +632,7 @@ async def update_own_profile(user_id: int, nickname: str) -> UserProfile:
                 )
             user.nickname = clean_nick
             await session.commit()
-            return _to_user_profile(user, auth_mode="mysql")
+            return await _enrich_profile_rbac(_to_user_profile(user, auth_mode="mysql"))
     except BusinessException:
         raise
     except (SQLAlchemyError, OSError) as exc:
@@ -576,16 +643,18 @@ async def update_own_profile(user_id: int, nickname: str) -> UserProfile:
                     "用户不存在", code=40401, status_code=status.HTTP_404_NOT_FOUND
                 ) from exc
             mem["nickname"] = clean_nick
-            return UserProfile(
-                id=mem["id"],
-                username=mem["username"],
-                email=mem["email"],
-                nickname=mem["nickname"],
-                role=mem["role"],
-                register_source=mem["register_source"],
-                email_provider=mem["email_provider"],
-                email_trust_score=mem["email_trust_score"],
-                auth_mode="dev-fallback",
+            return await _enrich_profile_rbac(
+                UserProfile(
+                    id=mem["id"],
+                    username=mem["username"],
+                    email=mem["email"],
+                    nickname=mem["nickname"],
+                    role=mem["role"],
+                    register_source=mem["register_source"],
+                    email_provider=mem["email_provider"],
+                    email_trust_score=mem["email_trust_score"],
+                    auth_mode="dev-fallback",
+                )
             )
         raise BusinessException(
             "数据库暂不可用", code=50301, status_code=status.HTTP_503_SERVICE_UNAVAILABLE
@@ -598,7 +667,8 @@ async def change_own_password(
     current_jti: str,
 ) -> dict[str, Any]:
     """用户自助修改密码，并可选择自动下线其他在线设备。"""
-    validate_password_strength(req.new_password)
+    min_pwd_len = await sys_config_service.get_int("security.password_min_length", default=8)
+    validate_password_strength(req.new_password, min_length=min_pwd_len)
     if req.current_password == req.new_password:
         raise BusinessException("新密码不能与当前密码相同", code=40025)
 
@@ -645,10 +715,21 @@ async def change_own_password(
 async def admin_create_account(
     req: AdminCreateAccountRequest,
     creator_admin_id: int,
+    creator_role: str = "super_admin",
 ) -> AccountItem:
-    """管理员后台直接分配创建用户账号（支持默认正规邮箱校验或显式允许内部邮箱）。"""
+    """管理员后台直接分配创建用户账号（支持默认正规邮箱校验或显式允许内部邮箱，并校验目标 RBAC 角色）。"""
     settings = get_settings()
-    validate_password_strength(req.password)
+    target_role = req.role.strip()
+    role_meta = await rbac_service.get_role_meta(target_role)
+    if not role_meta.get("id") and target_role not in {"super_admin", "admin", "operator", "user"}:
+        raise BusinessException(f"目标角色「{target_role}」不存在", code=40068)
+    if not role_meta.get("is_enabled"):
+        raise BusinessException(f"目标角色「{target_role}」不存在或已禁用", code=40068)
+    if target_role == "super_admin" and creator_role != "super_admin":
+        raise BusinessException("仅超级管理员可分配创建超级管理员账号", code=40301, status_code=403)
+
+    min_pwd_len = await sys_config_service.get_int("security.password_min_length", default=8)
+    validate_password_strength(req.password, min_length=min_pwd_len)
 
     analysis = await email_trust_analyzer.analyze(
         req.email,
@@ -770,6 +851,90 @@ async def admin_create_account(
 def get_dev_fallback_users() -> dict[int, dict[str, Any]]:
     _ensure_dev_fallback_seed()
     return _dev_fallback_users
+
+
+async def admin_update_account_role(
+    user_id: int,
+    role_code: str,
+    *,
+    operator_id: int,
+    operator_role: str,
+) -> dict[str, Any]:
+    """变更指定账号的 RBAC 角色，并强制下线其全部旧会话以使新权限立即生效。"""
+    clean_role = role_code.strip()
+    if user_id == operator_id:
+        raise BusinessException("不能修改当前登录管理员自身的角色", code=40069)
+
+    role_meta = await rbac_service.get_role_meta(clean_role)
+    if not role_meta.get("is_enabled"):
+        raise BusinessException(f"目标角色「{clean_role}」不存在或已禁用", code=40068)
+    if clean_role == "super_admin" and operator_role != "super_admin":
+        raise BusinessException("仅超级管理员有权授予超级管理员角色", code=40301, status_code=403)
+
+    settings = get_settings()
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            user = await session.get(User, user_id)
+            if user is None:
+                raise BusinessException(
+                    "目标用户不存在", code=40401, status_code=status.HTTP_404_NOT_FOUND
+                )
+            if user.role == "super_admin" and operator_role != "super_admin":
+                raise BusinessException(
+                    "无权降级或修改超级管理员账号角色", code=40301, status_code=403
+                )
+            if user.role == "super_admin" and clean_role != "super_admin":
+                sup_cnt = (
+                    await session.scalar(
+                        select(func.count(User.id)).where(
+                            User.role == "super_admin", User.is_active.is_(True)
+                        )
+                    )
+                    or 0
+                )
+                if sup_cnt <= 1:
+                    raise BusinessException("至少须保留一位活跃超级管理员，不可降级", code=40070)
+
+            user.role = clean_role
+            await session.commit()
+    except BusinessException:
+        raise
+    except (SQLAlchemyError, OSError) as exc:
+        if settings.is_development and settings.ALLOW_DEV_FALLBACK_AUTH:
+            store = get_dev_fallback_users()
+            item = store.get(user_id)
+            if item is None:
+                raise BusinessException(
+                    "目标用户不存在", code=40401, status_code=status.HTTP_404_NOT_FOUND
+                ) from exc
+            if item["role"] == "super_admin" and operator_role != "super_admin":
+                raise BusinessException(
+                    "无权降级或修改超级管理员账号角色", code=40301, status_code=403
+                ) from exc
+            if item["role"] == "super_admin" and clean_role != "super_admin":
+                sup_cnt = sum(
+                    1
+                    for u in store.values()
+                    if u.get("role") == "super_admin" and u.get("is_active")
+                )
+                if sup_cnt <= 1:
+                    raise BusinessException(
+                        "至少须保留一位活跃超级管理员，不可降级", code=40070
+                    ) from exc
+            item["role"] = clean_role
+        else:
+            raise BusinessException(
+                "数据库暂不可用", code=50301, status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+            ) from exc
+
+    kicked = await session_service.revoke_all_sessions(user_id)
+    return {
+        "id": user_id,
+        "role": clean_role,
+        "role_name": role_meta.get("name", clean_role),
+        "kicked_sessions": kicked,
+    }
 
 
 async def _exchange_wx_code(code: str) -> tuple[str, str | None, bool]:

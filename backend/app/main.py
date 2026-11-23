@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_v1_router
+from app.core.audit_middleware import AuditMiddleware
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import setup_logging
@@ -14,6 +15,8 @@ from app.db.mysql import check_mysql_health, dispose_mysql, ensure_tables, init_
 from app.db.redis import check_redis_health, close_redis, init_redis
 from app.services.ai_config_service import ensure_default_ai_config
 from app.services.auth_service import ensure_default_admin
+from app.services.rbac_service import ensure_default_roles
+from app.services.sys_config_service import ensure_default_sys_configs
 
 settings = get_settings()
 setup_logging(debug=settings.APP_DEBUG)
@@ -53,6 +56,8 @@ async def lifespan(_app: FastAPI):
 
     if mysql_ok:
         await ensure_tables()
+        await ensure_default_roles()
+        await ensure_default_sys_configs()
         await ensure_default_admin()
         await ensure_default_ai_config()
     else:
@@ -77,6 +82,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    app.add_middleware(AuditMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,

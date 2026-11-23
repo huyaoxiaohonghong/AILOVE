@@ -1,14 +1,22 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import BrandLogo from '@/components/BrandLogo.vue'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 
+interface NavItem {
+  path: string
+  title: string
+  icon: string
+  adminOnly: boolean
+  permission?: string
+}
+
 interface NavGroup {
   label: string
-  items: Array<{ path: string; title: string; icon: string; adminOnly: boolean }>
+  items: NavItem[]
 }
 
 const route = useRoute()
@@ -16,25 +24,36 @@ const router = useRouter()
 const appStore = useAppStore()
 const authStore = useAuthStore()
 
+const announcementDismissed = ref(false)
+
 const navGroups: NavGroup[] = [
   {
     label: '核心概览',
-    items: [{ path: '/dashboard', title: '控制台', icon: 'Odometer', adminOnly: true }],
+    items: [
+      { path: '/dashboard', title: '控制台', icon: 'Odometer', adminOnly: true, permission: 'dashboard:view' },
+    ],
   },
   {
-    label: '账号与风控',
+    label: '账号与权限',
     items: [
-      { path: '/accounts', title: '账号与分配', icon: 'UserFilled', adminOnly: true },
-      { path: '/users', title: '小程序用户', icon: 'User', adminOnly: true },
+      { path: '/accounts', title: '账号与分配', icon: 'UserFilled', adminOnly: true, permission: 'account:view' },
+      { path: '/rbac', title: '角色与权限', icon: 'Key', adminOnly: true, permission: 'rbac:role:view' },
+      { path: '/users', title: '小程序用户', icon: 'User', adminOnly: true, permission: 'miniapp_user:view' },
       { path: '/profile', title: '个人与安全', icon: 'Postcard', adminOnly: false },
     ],
   },
   {
-    label: '智能与系统',
+    label: '智能中心',
     items: [
-      { path: '/ai-config', title: 'AI 模型配置', icon: 'Cpu', adminOnly: true },
-      { path: '/ai-playground', title: 'AI 调试台', icon: 'ChatDotRound', adminOnly: false },
-      { path: '/settings', title: '系统配置', icon: 'Setting', adminOnly: true },
+      { path: '/ai-config', title: 'AI 模型配置', icon: 'Cpu', adminOnly: true, permission: 'ai:config:view' },
+      { path: '/ai-playground', title: 'AI 调试台', icon: 'ChatDotRound', adminOnly: false, permission: 'ai:chat' },
+    ],
+  },
+  {
+    label: '系统与审计',
+    items: [
+      { path: '/logs', title: '日志与审计', icon: 'Document', adminOnly: true, permission: 'log:audit:view' },
+      { path: '/settings', title: '系统配置', icon: 'Setting', adminOnly: true, permission: 'system:config:view' },
     ],
   },
 ]
@@ -43,15 +62,30 @@ const visibleGroups = computed(() =>
   navGroups
     .map((g) => ({
       label: g.label,
-      items: g.items.filter((item) => !item.adminOnly || authStore.isAdmin),
+      items: g.items.filter((item) => {
+        if (item.adminOnly && !authStore.isAdminPortal) return false
+        if (item.permission && !authStore.hasPermission(item.permission)) return false
+        return true
+      }),
     }))
     .filter((g) => g.items.length > 0),
 )
 
 const activePath = computed(() => route.path)
 const currentTitle = computed(() => (route.meta.title as string) || '控制台')
+const siteName = computed(() => appStore.publicConfig.site_name || 'AILOVE')
+const siteSubtitle = computed(
+  () => appStore.publicConfig.site_subtitle || (authStore.isAdminPortal ? '管理与风控中台' : '智能协同工作台'),
+)
+const roleDisplay = computed(
+  () => authStore.user?.role_name || (authStore.isAdminPortal ? '管理员' : '注册用户'),
+)
+const showAnnouncement = computed(
+  () => Boolean(appStore.publicConfig.announcement?.trim()) && !announcementDismissed.value,
+)
 
 onMounted(() => {
+  void appStore.loadPublicConfig()
   if (!authStore.user && authStore.isAuthenticated) {
     void authStore.loadProfile()
   }
@@ -79,8 +113,8 @@ async function handleLogout() {
       <div class="brand-bar" :class="{ 'is-collapsed': appStore.sidebarCollapsed }">
         <BrandLogo :size="34" />
         <div v-show="!appStore.sidebarCollapsed" class="brand-meta">
-          <div class="brand-name">AILOVE</div>
-          <div class="brand-sub">{{ authStore.isAdmin ? '管理与风控中台' : '智能协同工作台' }}</div>
+          <div class="brand-name">{{ siteName }}</div>
+          <div class="brand-sub">{{ siteSubtitle }}</div>
         </div>
       </div>
 
@@ -104,8 +138,13 @@ async function handleLogout() {
 
       <div v-show="!appStore.sidebarCollapsed" class="aside-footer">
         <div class="session-pill">
-          <span class="status-dot is-live" />
-          <span>24h 会话守护已开启</span>
+          <span
+            class="status-dot"
+            :class="appStore.publicConfig.maintenance_mode ? 'is-warn' : 'is-live'"
+          />
+          <span>
+            {{ appStore.publicConfig.maintenance_mode ? '系统维护模式开启中' : '会话与审计守护运行中' }}
+          </span>
         </div>
       </div>
     </el-aside>
@@ -125,14 +164,14 @@ async function handleLogout() {
             </el-icon>
           </button>
           <el-breadcrumb separator="/">
-            <el-breadcrumb-item>AILOVE</el-breadcrumb-item>
+            <el-breadcrumb-item>{{ siteName }}</el-breadcrumb-item>
             <el-breadcrumb-item>{{ currentTitle }}</el-breadcrumb-item>
           </el-breadcrumb>
         </div>
 
         <div class="header-right">
-          <span class="role-badge" :class="authStore.isAdmin ? 'is-admin' : 'is-user'">
-            {{ authStore.isAdmin ? '管理员' : '注册用户' }}
+          <span class="role-badge" :class="authStore.isAdminPortal ? 'is-admin' : 'is-user'">
+            {{ roleDisplay }}
           </span>
 
           <el-dropdown trigger="click">
@@ -158,6 +197,15 @@ async function handleLogout() {
 
       <el-main class="workspace-content">
         <div class="content-container">
+          <el-alert
+            v-if="showAnnouncement"
+            :title="`系统公告：${appStore.publicConfig.announcement}`"
+            type="warning"
+            show-icon
+            closable
+            class="announcement-bar"
+            @close="announcementDismissed = true"
+          />
           <RouterView />
         </div>
       </el-main>
@@ -212,6 +260,8 @@ async function handleLogout() {
   color: var(--ailove-ink-muted);
   margin-top: 1px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .nav-scroll {
@@ -417,5 +467,10 @@ async function handleLogout() {
 .content-container {
   max-width: 1320px;
   margin: 0 auto;
+}
+
+.announcement-bar {
+  margin-bottom: 18px;
+  border-radius: 12px;
 }
 </style>

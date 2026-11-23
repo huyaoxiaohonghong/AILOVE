@@ -54,13 +54,21 @@ export function adminCreateAccount(data: {
   password: string
   nickname: string
   username?: string
-  role: 'user' | 'admin'
+  role: string
   allow_non_mainstream_email: boolean
 }) {
   return request<AccountItem>({
     url: '/admin/accounts',
     method: 'post',
     data,
+  })
+}
+
+export function updateAccountRole(userId: number, role: string) {
+  return request<{ id: number; role: string; role_name: string; kicked_sessions: number }>({
+    url: `/admin/accounts/${userId}/role`,
+    method: 'patch',
+    data: { role },
   })
 }
 

@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import AdminLayout from '@/layout/AdminLayout.vue'
+import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { getStoredToken } from '@/utils/request'
 
@@ -19,37 +20,59 @@ const routes: RouteRecordRaw[] = [
         path: 'dashboard',
         name: 'Dashboard',
         component: () => import('@/views/dashboard/DashboardView.vue'),
-        meta: { title: '控制台', icon: 'Odometer', requiresAdmin: true },
+        meta: { title: '控制台', icon: 'Odometer', requiresAdmin: true, permission: 'dashboard:view' },
       },
       {
         path: 'accounts',
         name: 'Accounts',
         component: () => import('@/views/accounts/AccountsView.vue'),
-        meta: { title: '账号与分配', icon: 'UserFilled', requiresAdmin: true },
+        meta: { title: '账号与分配', icon: 'UserFilled', requiresAdmin: true, permission: 'account:view' },
+      },
+      {
+        path: 'rbac',
+        name: 'Rbac',
+        component: () => import('@/views/rbac/RbacView.vue'),
+        meta: { title: '角色与权限', icon: 'Key', requiresAdmin: true, permission: 'rbac:role:view' },
       },
       {
         path: 'users',
         name: 'Users',
         component: () => import('@/views/users/UsersView.vue'),
-        meta: { title: '小程序用户', icon: 'User', requiresAdmin: true },
+        meta: {
+          title: '小程序用户',
+          icon: 'User',
+          requiresAdmin: true,
+          permission: 'miniapp_user:view',
+        },
       },
       {
         path: 'ai-config',
         name: 'AiConfig',
         component: () => import('@/views/ai/AiConfigView.vue'),
-        meta: { title: 'AI 模型配置', icon: 'Cpu', requiresAdmin: true },
+        meta: { title: 'AI 模型配置', icon: 'Cpu', requiresAdmin: true, permission: 'ai:config:view' },
       },
       {
         path: 'ai-playground',
         name: 'AiPlayground',
         component: () => import('@/views/ai/AiPlaygroundView.vue'),
-        meta: { title: 'AI 调试台', icon: 'ChatDotRound' },
+        meta: { title: 'AI 调试台', icon: 'ChatDotRound', permission: 'ai:chat' },
+      },
+      {
+        path: 'logs',
+        name: 'Logs',
+        component: () => import('@/views/logs/LogsView.vue'),
+        meta: { title: '日志与审计', icon: 'Document', requiresAdmin: true, permission: 'log:audit:view' },
       },
       {
         path: 'settings',
         name: 'Settings',
         component: () => import('@/views/settings/SettingsView.vue'),
-        meta: { title: '系统配置', icon: 'Setting', requiresAdmin: true },
+        meta: {
+          title: '系统配置',
+          icon: 'Setting',
+          requiresAdmin: true,
+          permission: 'system:config:view',
+        },
       },
       {
         path: 'profile',
@@ -70,8 +93,18 @@ const router = createRouter({
   routes,
 })
 
+function resolveDefaultLanding(authStore: ReturnType<typeof useAuthStore>): string {
+  if (!authStore.isAdminPortal) return '/profile'
+  if (authStore.hasPermission('dashboard:view')) return '/dashboard'
+  if (authStore.hasPermission('account:view')) return '/accounts'
+  if (authStore.hasPermission('log:audit:view')) return '/logs'
+  return '/profile'
+}
+
 router.beforeEach(async (to) => {
-  const appTitle = import.meta.env.VITE_APP_TITLE || 'AILOVE 管理后台'
+  const appStore = useAppStore()
+  const siteName = appStore.publicConfig.site_name || 'AILOVE'
+  const appTitle = import.meta.env.VITE_APP_TITLE || `${siteName} 管理后台`
   if (typeof to.meta.title === 'string') {
     document.title = `${to.meta.title} - ${appTitle}`
   }
@@ -89,11 +122,16 @@ router.beforeEach(async (to) => {
   }
 
   if (to.path === '/login' && authStore.isAuthenticated) {
-    return { path: authStore.isAdmin ? '/dashboard' : '/profile' }
+    return { path: resolveDefaultLanding(authStore) }
   }
 
-  if (to.meta.requiresAdmin && !authStore.isAdmin) {
+  if (to.meta.requiresAdmin && !authStore.isAdminPortal) {
     return { path: '/profile' }
+  }
+
+  const requiredPerm = typeof to.meta.permission === 'string' ? to.meta.permission : ''
+  if (requiredPerm && authStore.isAuthenticated && !authStore.hasPermission(requiredPerm)) {
+    return { path: resolveDefaultLanding(authStore) }
   }
 
   return true

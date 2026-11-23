@@ -14,9 +14,29 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref<UserProfile | null>(null)
 
   const isAuthenticated = computed(() => Boolean(token.value))
-  const isAdmin = computed(
-    () => user.value?.role === 'super_admin' || user.value?.role === 'admin',
+  const permissions = computed<string[]>(() => user.value?.permissions ?? [])
+  const isAdminPortal = computed(
+    () =>
+      Boolean(user.value?.is_admin_portal) ||
+      user.value?.role === 'super_admin' ||
+      user.value?.role === 'admin' ||
+      user.value?.role === 'operator',
   )
+  const isAdmin = isAdminPortal
+
+  function hasPermission(code?: string): boolean {
+    if (!code) return true
+    const perms = permissions.value
+    if (perms.includes('*')) return true
+    if (perms.length > 0) return perms.includes(code)
+    // 兜底兼容：旧缓存无 permissions 字段时按内置管理员角色放行
+    return user.value?.role === 'super_admin'
+  }
+
+  function hasAnyPermission(codes: string[]): boolean {
+    if (!codes.length) return true
+    return codes.some((c) => hasPermission(c))
+  }
 
   async function login(account: string, password: string, captchaToken: string) {
     const res = await loginAccount({ account, password, captcha_token: captchaToken })
@@ -70,8 +90,12 @@ export const useAuthStore = defineStore('auth', () => {
   return {
     token,
     user,
+    permissions,
     isAuthenticated,
+    isAdminPortal,
     isAdmin,
+    hasPermission,
+    hasAnyPermission,
     login,
     register,
     loadProfile,

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.deps import get_current_admin
+from app.api.deps import require_permissions
 from app.core.config import get_settings
 from app.db.mysql import check_mysql_health, get_session_factory
 from app.db.redis import check_redis_health
@@ -23,7 +23,9 @@ router = APIRouter(prefix="/dashboard", tags=["管理端-仪表盘"])
 
 
 @router.get("/overview", summary="控制台核心概览数据")
-async def dashboard_overview(_current_admin: dict[str, Any] = Depends(get_current_admin)):
+async def dashboard_overview(
+    _current_admin: dict[str, Any] = Depends(require_permissions("dashboard:view")),
+):
     settings = get_settings()
     mysql_ok, mysql_status = await check_mysql_health()
     redis_ok, redis_status = await check_redis_health()
