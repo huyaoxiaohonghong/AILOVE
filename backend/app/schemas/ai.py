@@ -18,6 +18,9 @@ class ChatRequest(BaseModel):
     timezone: str | None = Field(
         default=None, max_length=64, description="客户端时区（如 Asia/Shanghai），留空默认北京时间"
     )
+    use_love_profile: bool | None = Field(
+        default=None, description="是否注入个人情感档案上下文（留空则跟随档案 auto_inject 开关）"
+    )
 
 
 class ChatResponse(BaseModel):
@@ -34,6 +37,8 @@ class ChatResponse(BaseModel):
     is_mock: bool = False
     history_length: int = 0
     token_usage: int = 0
+    love_profile_injected: bool = False
+    emotion_care: dict[str, Any] | None = None
 
 
 class ChatMessageItem(BaseModel):
@@ -41,8 +46,54 @@ class ChatMessageItem(BaseModel):
     content: str
 
 
-class ConversationRenameRequest(BaseModel):
-    title: str = Field(..., min_length=1, max_length=120, description="新的会话标题")
+class ConversationUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=120, description="新的会话标题")
+    is_pinned: bool | None = Field(default=None, description="是否置顶会话")
+    persona_id: int | None = Field(default=None, description="绑定的智能体 ID")
+    clear_persona: bool = Field(default=False, description="是否解除智能体绑定（回到默认直连）")
+
+
+ConversationRenameRequest = ConversationUpdateRequest
+
+
+RelationshipStage = Literal[
+    "",
+    "single_crush",
+    "ambiguous",
+    "in_love",
+    "long_distance",
+    "cold_war",
+    "breakup_healing",
+    "married",
+]
+
+
+class LoveProfileUpdateRequest(BaseModel):
+    relationship_stage: RelationshipStage = Field(default="", description="当前情感阶段编码")
+    partner_nickname: str = Field(default="", max_length=32, description="对方称呼")
+    partner_traits: list[str] = Field(default_factory=list, description="对方性格/依恋特点标签")
+    my_traits: list[str] = Field(default_factory=list, description="自身沟通特点标签")
+    relationship_goal: str = Field(default="", max_length=160, description="当前核心情感目标")
+    communication_taboos: str = Field(default="", max_length=300, description="沟通雷区与注意事项")
+    background_notes: str = Field(default="", max_length=1200, description="补充情感背景摘要")
+    auto_inject: bool = Field(default=True, description="是否自动注入 AI 对话上下文")
+
+
+ReplyHelperScene = Literal["ambiguous", "cold_reply", "conflict", "date_invite", "polite_decline"]
+ReplyHelperTone = Literal["playful", "gentle", "graceful", "sincere", "humorous"]
+
+
+class ReplyHelperRequest(BaseModel):
+    partner_message: str = Field(..., min_length=1, max_length=2000, description="对方发来的原话/聊天片段")
+    scene: ReplyHelperScene = Field(default="ambiguous", description="当前互动场景")
+    tone: ReplyHelperTone = Field(default="playful", description="期望回复语气")
+    context: str = Field(default="", max_length=800, description="可选：前文背景或事件经过")
+    my_intent: str = Field(default="", max_length=400, description="可选：我真实想表达的核心意思")
+    session_id: str | None = Field(default=None, max_length=64, description="归属会话 ID（留空新建）")
+    config_id: int | None = Field(default=None, description="指定模型配置 ID")
+    persona_id: int | None = Field(default=None, description="指定智能体 ID（留空自动匹配恋爱军师）")
+    timezone: str | None = Field(default=None, max_length=64, description="客户端时区")
+    use_love_profile: bool | None = Field(default=None, description="是否注入个人情感档案")
 
 
 class AIModelConfigCreate(BaseModel):

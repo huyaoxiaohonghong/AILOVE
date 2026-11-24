@@ -81,11 +81,15 @@ CREATE TABLE IF NOT EXISTS `ai_conversations` (
   `user_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '关联用户ID',
   `title` VARCHAR(128) NOT NULL DEFAULT '新对话' COMMENT '会话标题',
   `model_name` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '使用模型名',
+  `persona_id` BIGINT NULL COMMENT '绑定的智能体ID',
+  `persona_name` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '绑定的智能体名称快照',
+  `is_pinned` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否置顶会话',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_ai_conversations_session_id` (`session_id`),
-  KEY `idx_ai_conversations_user` (`user_type`, `user_id`)
+  KEY `idx_ai_conversations_user` (`user_type`, `user_id`),
+  KEY `idx_ai_conversations_persona` (`persona_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI 对话会话表';
 
 CREATE TABLE IF NOT EXISTS `ai_messages` (
@@ -246,3 +250,24 @@ CREATE TABLE IF NOT EXISTS `ai_usage_logs` (
   KEY `idx_ai_usage_logs_status` (`status`),
   KEY `idx_ai_usage_logs_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI 调用流水表';
+
+-- 13. 用户恋爱状态与情感背景记忆卡表
+CREATE TABLE IF NOT EXISTS `user_love_profiles` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `owner_scope` VARCHAR(64) NOT NULL COMMENT '归属作用域: web:1 / miniapp:2',
+  `user_type` VARCHAR(16) NOT NULL DEFAULT 'web' COMMENT '用户端类型: web / miniapp',
+  `user_id` BIGINT NOT NULL DEFAULT 0 COMMENT '用户ID',
+  `relationship_stage` VARCHAR(32) NOT NULL DEFAULT '' COMMENT '当前情感阶段编码',
+  `partner_nickname` VARCHAR(32) NOT NULL DEFAULT '' COMMENT '对方称呼/昵称',
+  `partner_traits_json` TEXT NOT NULL COMMENT '对方性格与依恋标签 JSON',
+  `my_traits_json` TEXT NOT NULL COMMENT '自我沟通特点标签 JSON',
+  `relationship_goal` VARCHAR(160) NOT NULL DEFAULT '' COMMENT '当前核心情感诉求/目标',
+  `communication_taboos` VARCHAR(300) NOT NULL DEFAULT '' COMMENT '沟通雷区与注意事项',
+  `background_notes` TEXT NOT NULL COMMENT '补充情感背景摘要',
+  `auto_inject` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否自动注入对话上下文',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_user_love_profiles_owner` (`owner_scope`),
+  KEY `idx_user_love_profiles_user` (`user_type`, `user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户情感背景记忆卡表';

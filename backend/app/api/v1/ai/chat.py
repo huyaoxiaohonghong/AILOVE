@@ -10,13 +10,25 @@ from fastapi.responses import StreamingResponse
 from app.api.deps import get_current_token_payload
 from app.core.exceptions import BusinessException
 from app.core.rate_limit import rate_limit
-from app.schemas.ai import ChatRequest, ConversationRenameRequest
+from app.schemas.ai import (
+    ChatRequest,
+    ConversationUpdateRequest,
+    LoveProfileUpdateRequest,
+    ReplyHelperRequest,
+)
 from app.schemas.common import ok
 from app.services.ai_config_service import list_ai_configs
 from app.services.ai_persona_service import list_personas
 from app.services.ai_providers import get_provider_adapter
 from app.services.ai_usage_service import get_user_quota_status
+from app.services.emotion_guard import get_reply_helper_presets
 from app.services.llm_service import build_owner_scope, llm_service
+from app.services.love_profile_service import (
+    clear_love_profile,
+    get_love_profile,
+    get_love_profile_presets,
+    upsert_love_profile,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ai", tags=["AI-LangChain 对话"])
@@ -41,17 +53,32 @@ async def get_conversation_messages(
     return ok(conv)
 
 
-@router.patch("/conversations/{session_id}", summary="重命名 AI 历史会话标题")
-async def rename_conversation(
+@router.patch("/conversations/{session_id}", summary="更新 AI 历史会话（重命名 / 置顶 / 绑定智能体）")
+async def update_conversation(
     session_id: str,
-    req: ConversationRenameRequest,
+    req: ConversationUpdateRequest,
     current_user: dict[str, Any] = Depends(get_current_token_payload),
 ):
+    if (
+        req.title is None
+        and req.is_pinned is None
+        and req.persona_id is None
+        and not req.clear_persona
+    ):
+        raise BusinessException("请至少提供一项待更新的会话属性", code=40052, status_code=400)
     user_type, user_id = _resolve_identity(current_user)
-    updated = await llm_service.rename_conversation(session_id, user_type, user_id, req.title)
+    updated = await llm_service.update_conversation(
+        session_id,
+        user_type,
+        user_id,
+        title=req.title,
+        is_pinned=req.is_pinned,
+        persona_id=req.persona_id,
+        clear_persona=req.clear_persona,
+    )
     if updated is None:
         raise BusinessException("目标会话不存在或无权访问", code=40405, status_code=404)
-    return ok(updated, message="会话标题已更新")
+    return ok(updated, message="会话信息已更新")
 
 
 @router.delete("/conversations/{session_id}", summary="删除 AI 历史会话及上下文记忆")
@@ -110,6 +137,46 @@ async def get_my_ai_quota(current_user: dict[str, Any] = Depends(get_current_tok
     return ok(quota)
 
 
+@router.get("/love-profile", summary="获取当前用户的恋爱情感背景记忆卡与预设选项")
+async def get_my_love_profile(current_user: dict[str, Any] = Depends(get_current_token_payload)):
+    user_type, user_id = _resolve_identity(current_user)
+    profile = await get_love_profile(user_type, user_id)
+    return ok({"profile": profile, "presets": get_love_profile_presets()})
+
+
+@router.put("/love-profile", summary="保存或更新当前用户的恋爱情感背景记忆卡")
+async def save_my_love_profile(
+    req: LoveProfileUpdateRequest,
+    current_user: dict[str, Any] = Depends(get_current_token_payload),
+):
+    user_type, user_id = _resolve_identity(current_user)
+    profile = await upsert_love_profile(
+        user_type,
+        user_id,
+        relationship_stage=req.relationship_stage,
+        partner_nickname=req.partner_nickname,
+        partner_traits=req.partner_traits,
+        my_traits=req.my_traits,
+        relationship_goal=req.relationship_goal,
+        communication_taboos=req.communication_taboos,
+        background_notes=req.background_notes,
+        auto_inject=req.auto_inject,
+    )
+    return ok({"profile": profile}, message="个人情感档案已保存")
+
+
+@router.delete("/love-profile", summary="清空当前用户的恋爱情感背景记忆卡")
+async def delete_my_love_profile(current_user: dict[str, Any] = Depends(get_current_token_payload)):
+    user_type, user_id = _resolve_identity(current_user)
+    profile = await clear_love_profile(user_type, user_id)
+    return ok({"profile": profile}, message="个人情感档案已清空")
+
+
+@router.get("/reply-helper/presets", summary="获取「帮我回消息」场景与语气预设")
+async def get_reply_helper_options(_user: dict[str, Any] = Depends(get_current_token_payload)):
+    return ok(get_reply_helper_presets())
+
+
 def _resolve_identity(current_user: dict[str, Any]) -> tuple[str, int]:
     user_type = str(current_user.get("type", "web"))
     raw_sub = str(current_user.get("sub", "0"))
@@ -147,35 +214,31 @@ async def ai_chat(
     return ok(result.model_dump())
 
 
-@router.post(
-    "/chat/stream",
-    summary="LangChain SSE 流式多轮对话（支持 OpenAI/Anthropic 双协议与深度思考流）",
-    dependencies=[Depends(rate_limit("ai_chat", limit=30, window_seconds=60, by_user=True))],
-)
-async def ai_chat_stream(
-    req: ChatRequest,
-    current_user: dict[str, Any] = Depends(get_current_token_payload),
-):
-    user_type, user_id = _resolve_identity(current_user)
-    username, role = _resolve_user_meta(current_user)
-    session_id, cfg, persona_meta, event_gen = await llm_service.stream_chat(
-        req, user_type=user_type, user_id=user_id, username=username, role=role
-    )
-
+def _build_sse_response(
+    session_id: str,
+    cfg: Any,
+    meta: dict[str, Any],
+    event_gen: Any,
+    *,
+    user_message_preview: str | None = None,
+) -> StreamingResponse:
     async def event_generator():
-        yield _sse(
-            {
-                "event": "meta",
-                "session_id": session_id,
-                "model": cfg.model_name,
-                "provider": cfg.provider,
-                "protocol": cfg.protocol,
-                "config_name": cfg.name,
-                "persona_id": persona_meta.get("persona_id"),
-                "persona_name": persona_meta.get("persona_name") or "",
-                "is_mock": not cfg.is_configured,
-            }
-        )
+        meta_payload: dict[str, Any] = {
+            "event": "meta",
+            "session_id": session_id,
+            "model": cfg.model_name,
+            "provider": cfg.provider,
+            "protocol": cfg.protocol,
+            "config_name": cfg.name,
+            "persona_id": meta.get("persona_id"),
+            "persona_name": meta.get("persona_name") or "",
+            "is_mock": not cfg.is_configured,
+            "love_profile_injected": bool(meta.get("love_profile_injected", False)),
+            "emotion_care": meta.get("emotion_care"),
+        }
+        if user_message_preview is not None:
+            meta_payload["prompt_preview"] = user_message_preview
+        yield _sse(meta_payload)
         try:
             async for event_type, chunk in event_gen:
                 yield _sse({"event": event_type, "content": chunk})
@@ -194,6 +257,75 @@ async def ai_chat_stream(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@router.post(
+    "/chat/stream",
+    summary="LangChain SSE 流式多轮对话（支持 OpenAI/Anthropic 双协议与深度思考流）",
+    dependencies=[Depends(rate_limit("ai_chat", limit=30, window_seconds=60, by_user=True))],
+)
+async def ai_chat_stream(
+    req: ChatRequest,
+    current_user: dict[str, Any] = Depends(get_current_token_payload),
+):
+    user_type, user_id = _resolve_identity(current_user)
+    username, role = _resolve_user_meta(current_user)
+    session_id, cfg, persona_meta, event_gen = await llm_service.stream_chat(
+        req, user_type=user_type, user_id=user_id, username=username, role=role
+    )
+    return _build_sse_response(session_id, cfg, persona_meta, event_gen)
+
+
+@router.post(
+    "/reply-helper",
+    summary="「帮我回消息 / 聊天记录拆解」结构化同步生成",
+    dependencies=[Depends(rate_limit("ai_chat", limit=30, window_seconds=60, by_user=True))],
+)
+async def ai_reply_helper(
+    req: ReplyHelperRequest,
+    current_user: dict[str, Any] = Depends(get_current_token_payload),
+):
+    user_type, user_id = _resolve_identity(current_user)
+    username, role = _resolve_user_meta(current_user)
+    chat_req, extra_instruction = await llm_service.build_reply_helper_chat_request(req)
+    result = await llm_service.chat(
+        chat_req,
+        user_type=user_type,
+        user_id=user_id,
+        username=username,
+        role=role,
+        extra_system_instruction=extra_instruction,
+    )
+    return ok(result.model_dump())
+
+
+@router.post(
+    "/reply-helper/stream",
+    summary="「帮我回消息 / 聊天记录拆解」SSE 流式生成",
+    dependencies=[Depends(rate_limit("ai_chat", limit=30, window_seconds=60, by_user=True))],
+)
+async def ai_reply_helper_stream(
+    req: ReplyHelperRequest,
+    current_user: dict[str, Any] = Depends(get_current_token_payload),
+):
+    user_type, user_id = _resolve_identity(current_user)
+    username, role = _resolve_user_meta(current_user)
+    chat_req, extra_instruction = await llm_service.build_reply_helper_chat_request(req)
+    session_id, cfg, persona_meta, event_gen = await llm_service.stream_chat(
+        chat_req,
+        user_type=user_type,
+        user_id=user_id,
+        username=username,
+        role=role,
+        extra_system_instruction=extra_instruction,
+    )
+    return _build_sse_response(
+        session_id,
+        cfg,
+        persona_meta,
+        event_gen,
+        user_message_preview=chat_req.message,
     )
 
 

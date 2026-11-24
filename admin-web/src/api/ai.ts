@@ -74,6 +74,18 @@ export interface AvailableAIModel {
   last_test_status: string
 }
 
+export interface EmotionCareHotline {
+  name: string
+  phone: string
+}
+
+export interface EmotionCareNotice {
+  level: 'distress' | 'crisis'
+  title: string
+  message: string
+  hotlines: EmotionCareHotline[]
+}
+
 export interface AiChatPayload {
   message: string
   session_id?: string
@@ -82,6 +94,7 @@ export interface AiChatPayload {
   system_prompt?: string
   temperature?: number
   timezone?: string
+  use_love_profile?: boolean
 }
 
 export interface AiChatResult {
@@ -98,6 +111,76 @@ export interface AiChatResult {
   is_mock: boolean
   history_length: number
   token_usage: number
+  love_profile_injected?: boolean
+  emotion_care?: EmotionCareNotice | null
+}
+
+export type RelationshipStage =
+  | ''
+  | 'single_crush'
+  | 'ambiguous'
+  | 'in_love'
+  | 'long_distance'
+  | 'cold_war'
+  | 'breakup_healing'
+  | 'married'
+
+export interface UserLoveProfile {
+  owner_scope: string
+  relationship_stage: RelationshipStage
+  relationship_stage_label: string
+  partner_nickname: string
+  partner_traits: string[]
+  my_traits: string[]
+  relationship_goal: string
+  communication_taboos: string
+  background_notes: string
+  auto_inject: boolean
+  is_configured: boolean
+  updated_at: string | null
+}
+
+export interface LoveProfilePresets {
+  stages: Array<{ code: RelationshipStage; label: string; emoji: string }>
+  partner_trait_presets: string[]
+  my_trait_presets: string[]
+}
+
+export interface LoveProfileUpdatePayload {
+  relationship_stage: RelationshipStage
+  partner_nickname: string
+  partner_traits: string[]
+  my_traits: string[]
+  relationship_goal: string
+  communication_taboos: string
+  background_notes: string
+  auto_inject: boolean
+}
+
+export type ReplyHelperScene =
+  | 'ambiguous'
+  | 'cold_reply'
+  | 'conflict'
+  | 'date_invite'
+  | 'polite_decline'
+export type ReplyHelperTone = 'playful' | 'gentle' | 'graceful' | 'sincere' | 'humorous'
+
+export interface ReplyHelperPayload {
+  partner_message: string
+  scene: ReplyHelperScene
+  tone: ReplyHelperTone
+  context?: string
+  my_intent?: string
+  session_id?: string
+  config_id?: number
+  persona_id?: number
+  timezone?: string
+  use_love_profile?: boolean
+}
+
+export interface ReplyHelperPresets {
+  scenes: Array<{ code: ReplyHelperScene; label: string; desc: string }>
+  tones: Array<{ code: ReplyHelperTone; label: string; desc: string }>
 }
 
 export type PersonaCategory = 'dating' | 'chat_coach' | 'relationship' | 'conflict' | 'healing'
@@ -191,6 +274,9 @@ export interface AIConversationItem {
   session_id: string
   title: string
   model_name: string
+  persona_id?: number | null
+  persona_name?: string
+  is_pinned?: boolean
   created_at: string
   updated_at: string
 }
@@ -323,6 +409,9 @@ export function fetchConversationMessages(sessionId: string) {
     session_id: string
     title: string
     model_name: string
+    persona_id?: number | null
+    persona_name?: string
+    is_pinned?: boolean
     messages: AIConversationMessage[]
   }>({
     url: `/ai/conversations/${encodeURIComponent(sessionId)}/messages`,
@@ -330,11 +419,67 @@ export function fetchConversationMessages(sessionId: string) {
   })
 }
 
-export function renameAiConversation(sessionId: string, title: string) {
-  return request<{ session_id: string; title: string; model_name: string }>({
+export function updateAiConversation(
+  sessionId: string,
+  data: {
+    title?: string
+    is_pinned?: boolean
+    persona_id?: number | null
+    clear_persona?: boolean
+  },
+) {
+  return request<{
+    session_id: string
+    title: string
+    model_name: string
+    persona_id?: number | null
+    persona_name?: string
+    is_pinned: boolean
+  }>({
     url: `/ai/conversations/${encodeURIComponent(sessionId)}`,
     method: 'patch',
-    data: { title },
+    data,
+  })
+}
+
+export function renameAiConversation(sessionId: string, title: string) {
+  return updateAiConversation(sessionId, { title })
+}
+
+export function fetchMyLoveProfile() {
+  return request<{ profile: UserLoveProfile; presets: LoveProfilePresets }>({
+    url: '/ai/love-profile',
+    method: 'get',
+  })
+}
+
+export function saveMyLoveProfile(data: LoveProfileUpdatePayload) {
+  return request<{ profile: UserLoveProfile }>({
+    url: '/ai/love-profile',
+    method: 'put',
+    data,
+  })
+}
+
+export function clearMyLoveProfile() {
+  return request<{ profile: UserLoveProfile }>({
+    url: '/ai/love-profile',
+    method: 'delete',
+  })
+}
+
+export function fetchReplyHelperPresets() {
+  return request<ReplyHelperPresets>({
+    url: '/ai/reply-helper/presets',
+    method: 'get',
+  })
+}
+
+export function sendReplyHelper(data: ReplyHelperPayload) {
+  return request<AiChatResult>({
+    url: '/ai/reply-helper',
+    method: 'post',
+    data,
   })
 }
 
@@ -399,37 +544,45 @@ export function fetchAiAnalytics(days = 7) {
   })
 }
 
-export async function streamAiChat(
-  data: AiChatPayload,
-  callbacks: {
-    onMeta?: (meta: {
-      session_id: string
-      model?: string
-      provider?: string
-      protocol?: AIProtocol
-      config_name?: string
-      persona_id?: number | null
-      persona_name?: string
-      is_mock?: boolean
-    }) => void
-    onReasoning?: (chunk: string) => void
-    onDelta: (chunk: string) => void
-    onUsage?: (totalTokens: number) => void
-    onDone?: (sessionId: string) => void
-    onError?: (message: string) => void
-  },
+export interface StreamAiMeta {
+  session_id: string
+  model?: string
+  provider?: string
+  protocol?: AIProtocol
+  config_name?: string
+  persona_id?: number | null
+  persona_name?: string
+  is_mock?: boolean
+  love_profile_injected?: boolean
+  emotion_care?: EmotionCareNotice | null
+  prompt_preview?: string
+}
+
+export interface StreamAiCallbacks {
+  onMeta?: (meta: StreamAiMeta) => void
+  onReasoning?: (chunk: string) => void
+  onDelta: (chunk: string) => void
+  onUsage?: (totalTokens: number) => void
+  onDone?: (sessionId: string) => void
+  onError?: (message: string) => void
+}
+
+async function consumeAiSse(
+  endpointPath: string,
+  body: object,
+  callbacks: StreamAiCallbacks,
   signal?: AbortSignal,
 ): Promise<void> {
   const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api/v1'
   const token = getStoredToken()
 
-  const response = await fetch(`${baseUrl}/ai/chat/stream`, {
+  const response = await fetch(`${baseUrl}${endpointPath}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify(data),
+    body: JSON.stringify(body),
     signal,
   })
 
@@ -467,6 +620,9 @@ export async function streamAiChat(
       persona_id?: number | null
       persona_name?: string
       is_mock?: boolean
+      love_profile_injected?: boolean
+      emotion_care?: EmotionCareNotice | null
+      prompt_preview?: string
       content?: string
       message?: string
     }
@@ -486,6 +642,9 @@ export async function streamAiChat(
         persona_id: payload.persona_id,
         persona_name: payload.persona_name,
         is_mock: payload.is_mock,
+        love_profile_injected: payload.love_profile_injected,
+        emotion_care: payload.emotion_care,
+        prompt_preview: payload.prompt_preview,
       })
     } else if (payload.event === 'reasoning' && payload.content) {
       callbacks.onReasoning?.(payload.content)
@@ -515,4 +674,20 @@ export async function streamAiChat(
   if (buffer.trim()) {
     dispatchBlock(buffer)
   }
+}
+
+export function streamAiChat(
+  data: AiChatPayload,
+  callbacks: StreamAiCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  return consumeAiSse('/ai/chat/stream', data, callbacks, signal)
+}
+
+export function streamReplyHelper(
+  data: ReplyHelperPayload,
+  callbacks: StreamAiCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  return consumeAiSse('/ai/reply-helper/stream', data, callbacks, signal)
 }

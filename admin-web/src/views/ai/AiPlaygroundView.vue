@@ -1,22 +1,36 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from '@/plugins/element-plus'
-import { MagicStick } from '@element-plus/icons-vue'
+import { ChatDotRound, MagicStick, Postcard } from '@element-plus/icons-vue'
 import {
+  clearMyLoveProfile,
   deleteAiConversation,
   fetchAiConversations,
   fetchAvailableModels,
   fetchConversationMessages,
   fetchMyAiQuota,
+  fetchMyLoveProfile,
   fetchPublicPersonas,
+  fetchReplyHelperPresets,
   renameAiConversation,
+  saveMyLoveProfile,
   sendAiChat,
+  sendReplyHelper,
   streamAiChat,
+  streamReplyHelper,
+  updateAiConversation,
   type AIConversationItem,
   type AIPersonaItem,
   type AIUserQuota,
   type AvailableAIModel,
+  type EmotionCareNotice,
+  type LoveProfilePresets,
+  type RelationshipStage,
+  type ReplyHelperPresets,
+  type ReplyHelperScene,
+  type ReplyHelperTone,
+  type UserLoveProfile,
 } from '@/api/ai'
 import { decodeUtf8Base64, renderMarkdown } from '@/utils/markdown'
 
@@ -27,6 +41,8 @@ interface ChatBubble {
   reasoning?: string
   modelLabel?: string
   tokenUsage?: number
+  loveProfileInjected?: boolean
+  emotionCare?: EmotionCareNotice | null
   isError?: boolean
 }
 
@@ -34,7 +50,54 @@ const WELCOME_MSG: ChatBubble = {
   id: 1,
   role: 'assistant',
   content:
-    '你好！这里是 **AILOVE 恋爱情感 AI 对话工作台**，可在上方快速切换「高情商恋爱军师 / 心动约会策划师 / 亲密关系顾问 / 吵架降温调解员 / 深夜情绪树洞」等情感智能体，也支持自由直连对话。\n\n- 默认接入 `deepseek-flash` / `deepseek-v4-pro`\n- 自动注入实时系统时钟上下文与历史多会话记忆\n- 支持思考链展示、Markdown 排版、复制与重新生成',
+    '你好！这里是 **AILOVE 恋爱情感 AI 对话工作台**，可在上方快速切换「高情商恋爱军师 / 心动约会策划师 / 亲密关系顾问 / 吵架降温调解员 / 深夜情绪树洞」等情感智能体，也支持自由直连对话。\n\n- 支持配置「**我的情感档案**」记忆卡，自动注入背景免去每次重复交代\n- 点击「**帮我回消息**」粘贴对方原话，一键拆解潜台词并生成 3 条高情商备选回复\n- 历史会话自动绑定情感智能体并支持置顶，低谷情绪自动触发温柔关怀护栏',
+}
+
+const DEFAULT_LOVE_PRESETS: LoveProfilePresets = {
+  stages: [
+    { code: 'single_crush', label: '暗恋观察期', emoji: '🌱' },
+    { code: 'ambiguous', label: '暧昧升温期', emoji: '✨' },
+    { code: 'in_love', label: '热恋甜蜜期', emoji: '💞' },
+    { code: 'long_distance', label: '异地相处期', emoji: '🚄' },
+    { code: 'cold_war', label: '争吵冷战修复', emoji: '🧊' },
+    { code: 'breakup_healing', label: '失恋疗愈期', emoji: '🌙' },
+    { code: 'married', label: '长期稳定/伴侣', emoji: '🏡' },
+  ],
+  partner_trait_presets: [
+    '慢热型',
+    '回避型依恋',
+    '嘴硬心软',
+    '工作忙回复慢',
+    '细节控',
+    '情绪敏感',
+    '直球理性',
+    '爱吃醋',
+  ],
+  my_trait_presets: [
+    '容易内耗',
+    '焦虑型依恋',
+    '直球真诚',
+    '不善表达',
+    '容易心软',
+    '注重仪式感',
+  ],
+}
+
+const DEFAULT_REPLY_PRESETS: ReplyHelperPresets = {
+  scenes: [
+    { code: 'ambiguous', label: '暧昧升温', desc: '试探心意、自然拉近距离' },
+    { code: 'cold_reply', label: '对方冷淡', desc: '回复敷衍、间隔变长怎么破局' },
+    { code: 'conflict', label: '吵架哄人', desc: '情绪降温、体面化解僵局' },
+    { code: 'date_invite', label: '约会邀约', desc: '发出或回应见面邀约' },
+    { code: 'polite_decline', label: '体面婉拒', desc: '温和守边界、不伤和气' },
+  ],
+  tones: [
+    { code: 'playful', label: '俏皮拉扯', desc: '轻幽默带点小反问，留出聊天钩子' },
+    { code: 'gentle', label: '温柔体贴', desc: '先接住对方情绪，温暖有安全感' },
+    { code: 'graceful', label: '体面台阶', desc: '不卑不亢，给彼此舒适退路' },
+    { code: 'sincere', label: '真诚直球', desc: '坦荡清晰表达想法，减少猜忌内耗' },
+    { code: 'humorous', label: '幽默破冰', desc: '轻松调侃化解尴尬或沉默' },
+  ],
 }
 
 const route = useRoute()
@@ -49,6 +112,49 @@ const quota = ref<AIUserQuota | null>(null)
 const conversations = ref<AIConversationItem[]>([])
 const conversationsLoading = ref(false)
 const sidebarVisible = ref(true)
+
+// 情感背景记忆卡状态
+const loveProfile = ref<UserLoveProfile | null>(null)
+const lovePresets = ref<LoveProfilePresets>(DEFAULT_LOVE_PRESETS)
+const loveProfileDrawerVisible = ref(false)
+const loveProfileSaving = ref(false)
+const customPartnerTrait = ref('')
+const loveForm = reactive<{
+  relationship_stage: RelationshipStage
+  partner_nickname: string
+  partner_traits: string[]
+  my_traits: string[]
+  relationship_goal: string
+  communication_taboos: string
+  background_notes: string
+  auto_inject: boolean
+}>({
+  relationship_stage: '',
+  partner_nickname: '',
+  partner_traits: [],
+  my_traits: [],
+  relationship_goal: '',
+  communication_taboos: '',
+  background_notes: '',
+  auto_inject: true,
+})
+
+// 「帮我回消息」结构化工具状态
+const replyHelperVisible = ref(false)
+const replyPresets = ref<ReplyHelperPresets>(DEFAULT_REPLY_PRESETS)
+const replyForm = reactive<{
+  partner_message: string
+  scene: ReplyHelperScene
+  tone: ReplyHelperTone
+  context: string
+  my_intent: string
+}>({
+  partner_message: '',
+  scene: 'ambiguous',
+  tone: 'playful',
+  context: '',
+  my_intent: '',
+})
 
 const sessionId = ref('')
 const inputText = ref('')
@@ -68,6 +174,17 @@ const currentModel = computed(
 const activePersona = computed(
   () => personas.value.find((p) => p.id === selectedPersonaId.value) ?? null,
 )
+
+const loveProfileActive = computed(
+  () => Boolean(loveProfile.value?.is_configured && loveProfile.value?.auto_inject),
+)
+
+const loveProfileBadgeText = computed(() => {
+  const lp = loveProfile.value
+  if (!lp?.is_configured) return '情感档案'
+  const stage = lp.relationship_stage_label || '已填写'
+  return lp.auto_inject ? `${stage} · 记忆生效` : `${stage} · 已暂停`
+})
 
 const plazaFilteredPersonas = computed(() =>
   plazaCategory.value === 'all'
@@ -93,6 +210,121 @@ const lastAssistantIdx = computed(() => {
   }
   return -1
 })
+
+function resolvePersonaEmoji(personaId?: number | null): string {
+  if (!personaId) return '💬'
+  return personas.value.find((p) => p.id === personaId)?.avatar_emoji || '💘'
+}
+
+function syncLoveFormFromProfile(lp: UserLoveProfile) {
+  loveForm.relationship_stage = lp.relationship_stage || ''
+  loveForm.partner_nickname = lp.partner_nickname || ''
+  loveForm.partner_traits = [...(lp.partner_traits || [])]
+  loveForm.my_traits = [...(lp.my_traits || [])]
+  loveForm.relationship_goal = lp.relationship_goal || ''
+  loveForm.communication_taboos = lp.communication_taboos || ''
+  loveForm.background_notes = lp.background_notes || ''
+  loveForm.auto_inject = lp.auto_inject !== false
+}
+
+async function loadLoveProfile() {
+  try {
+    const res = await fetchMyLoveProfile()
+    loveProfile.value = res.profile
+    if (res.presets?.stages?.length) {
+      lovePresets.value = res.presets
+    }
+    syncLoveFormFromProfile(res.profile)
+  } catch {
+    // 忽略
+  }
+}
+
+async function loadReplyPresets() {
+  try {
+    const res = await fetchReplyHelperPresets()
+    if (res.scenes?.length && res.tones?.length) {
+      replyPresets.value = res
+    }
+  } catch {
+    // 使用内置默认值
+  }
+}
+
+function openLoveProfileDrawer() {
+  if (loveProfile.value) {
+    syncLoveFormFromProfile(loveProfile.value)
+  }
+  loveProfileDrawerVisible.value = true
+}
+
+function toggleTraitTag(list: string[], tag: string) {
+  const idx = list.indexOf(tag)
+  if (idx >= 0) {
+    list.splice(idx, 1)
+  } else if (list.length < 8) {
+    list.push(tag)
+  } else {
+    ElMessage.warning('最多选择 8 个标签')
+  }
+}
+
+function addCustomPartnerTrait() {
+  const val = customPartnerTrait.value.trim()
+  if (!val) return
+  if (loveForm.partner_traits.includes(val)) {
+    customPartnerTrait.value = ''
+    return
+  }
+  if (loveForm.partner_traits.length >= 8) {
+    ElMessage.warning('对方标签最多添加 8 个')
+    return
+  }
+  loveForm.partner_traits.push(val.slice(0, 24))
+  customPartnerTrait.value = ''
+}
+
+async function handleSaveLoveProfile() {
+  loveProfileSaving.value = true
+  try {
+    const res = await saveMyLoveProfile({
+      relationship_stage: loveForm.relationship_stage,
+      partner_nickname: loveForm.partner_nickname.trim(),
+      partner_traits: [...loveForm.partner_traits],
+      my_traits: [...loveForm.my_traits],
+      relationship_goal: loveForm.relationship_goal.trim(),
+      communication_taboos: loveForm.communication_taboos.trim(),
+      background_notes: loveForm.background_notes.trim(),
+      auto_inject: loveForm.auto_inject,
+    })
+    loveProfile.value = res.profile
+    syncLoveFormFromProfile(res.profile)
+    loveProfileDrawerVisible.value = false
+    ElMessage.success(
+      res.profile.is_configured && res.profile.auto_inject
+        ? '情感档案已保存，后续对话将自动结合你的背景'
+        : '情感档案已保存',
+    )
+  } finally {
+    loveProfileSaving.value = false
+  }
+}
+
+async function handleClearLoveProfile() {
+  try {
+    await ElMessageBox.confirm('确认清空个人情感档案记忆卡？清空后可随时重新填写。', '清空档案', {
+      confirmButtonText: '确认清空',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+    const res = await clearMyLoveProfile()
+    loveProfile.value = res.profile
+    syncLoveFormFromProfile(res.profile)
+    ElMessage.success('个人情感档案已清空')
+  } catch {
+    // 取消
+  }
+}
 
 async function loadModels() {
   try {
@@ -159,13 +391,20 @@ async function selectConversation(conv: AIConversationItem) {
   try {
     const detail = await fetchConversationMessages(conv.session_id)
     sessionId.value = detail.session_id
+    // 自动还原该历史会话所绑定的情感智能体人设
+    if (detail.persona_id && personas.value.some((p) => p.id === detail.persona_id)) {
+      selectedPersonaId.value = detail.persona_id
+    } else {
+      selectedPersonaId.value = undefined
+    }
+    const labelPrefix = detail.persona_name ? `${detail.persona_name} · ` : ''
     messages.value = detail.messages
       .filter((m) => m.role === 'user' || m.role === 'assistant')
       .map((m, idx) => ({
         id: m.id ?? idx + 1,
         role: m.role as 'user' | 'assistant',
         content: m.content,
-        modelLabel: m.role === 'assistant' ? detail.model_name || 'AI' : undefined,
+        modelLabel: m.role === 'assistant' ? `${labelPrefix}${detail.model_name || 'AI'}` : undefined,
         tokenUsage: m.token_usage || undefined,
       }))
     if (messages.value.length === 0) {
@@ -186,9 +425,20 @@ function handleNewConversation() {
     {
       id: Date.now(),
       role: 'assistant',
-      content: '已开启全新会话，请输入你想探索或提问的内容。',
+      content: '已开启全新会话，请输入你想探讨的情感话题，或点击「帮我回消息」直接粘贴 TA 的原话。',
     },
   ]
+}
+
+async function handleTogglePin(conv: AIConversationItem) {
+  const nextPinned = !conv.is_pinned
+  try {
+    await updateAiConversation(conv.session_id, { is_pinned: nextPinned })
+    ElMessage.success(nextPinned ? '会话已置顶' : '已取消置顶')
+    await loadConversations()
+  } catch {
+    // 忽略
+  }
 }
 
 async function handleRenameConversation(conv: AIConversationItem) {
@@ -270,6 +520,8 @@ async function sendPromptText(text: string, appendUserBubble = true) {
         {
           onMeta: (meta) => {
             sessionId.value = meta.session_id
+            assistantMsg.loveProfileInjected = Boolean(meta.love_profile_injected)
+            assistantMsg.emotionCare = meta.emotion_care ?? null
             if (meta.model) {
               const pPrefix = meta.persona_name ? `${meta.persona_name} · ` : ''
               assistantMsg.modelLabel = `${pPrefix}${meta.config_name || 'AI'} (${meta.model})${meta.is_mock ? ' · 演示' : ''}`
@@ -301,10 +553,139 @@ async function sendPromptText(text: string, appendUserBubble = true) {
       assistantMsg.reasoning = res.reasoning || ''
       assistantMsg.content = res.reply
       assistantMsg.tokenUsage = res.token_usage || undefined
+      assistantMsg.loveProfileInjected = Boolean(res.love_profile_injected)
+      assistantMsg.emotionCare = res.emotion_care ?? null
       const pPrefix = res.persona_name ? `${res.persona_name} · ` : ''
       assistantMsg.modelLabel = `${pPrefix}${res.config_name || 'AI'} (${res.model})${res.is_mock ? ' · 演示' : ''}`
       await scrollToBottom()
     }
+    void Promise.all([loadConversations(), loadQuota()])
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      assistantMsg.content = assistantMsg.content
+        ? `${assistantMsg.content}\n\n（已停止生成）`
+        : '（已停止生成）'
+    } else {
+      assistantMsg.isError = true
+      assistantMsg.content = `请求出错：${err instanceof Error ? err.message : '未知错误'}`
+    }
+  } finally {
+    abortController = null
+    sending.value = false
+  }
+}
+
+async function handleSubmitReplyHelper() {
+  const partnerMsg = replyForm.partner_message.trim()
+  if (!partnerMsg) {
+    ElMessage.warning('请先粘贴或输入对方发来的原话')
+    return
+  }
+  if (sending.value) return
+
+  const sceneLabel =
+    replyPresets.value.scenes.find((s) => s.code === replyForm.scene)?.label || replyForm.scene
+  const toneLabel =
+    replyPresets.value.tones.find((t) => t.code === replyForm.tone)?.label || replyForm.tone
+
+  const previewLines = [
+    `【帮我回消息 · ${sceneLabel} / ${toneLabel}】`,
+    `对方原话：「${partnerMsg}」`,
+  ]
+  if (replyForm.my_intent.trim()) {
+    previewLines.push(`我想表达：${replyForm.my_intent.trim()}`)
+  }
+
+  replyHelperVisible.value = false
+  sending.value = true
+
+  const userBubble: ChatBubble = {
+    id: Date.now(),
+    role: 'user',
+    content: previewLines.join('\n'),
+  }
+  const assistantMsg: ChatBubble = {
+    id: Date.now() + 1,
+    role: 'assistant',
+    content: '',
+    reasoning: '',
+    modelLabel: '高情商恋爱军师 · 拆解中...',
+  }
+  messages.value.push(userBubble, assistantMsg)
+  await scrollToBottom()
+
+  try {
+    const clientTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai'
+    const payload = {
+      partner_message: partnerMsg,
+      scene: replyForm.scene,
+      tone: replyForm.tone,
+      context: replyForm.context.trim(),
+      my_intent: replyForm.my_intent.trim(),
+      session_id: sessionId.value || undefined,
+      config_id: selectedConfigId.value,
+      persona_id: selectedPersonaId.value,
+      timezone: clientTz,
+    }
+
+    if (useStream.value) {
+      abortController = new AbortController()
+      await streamReplyHelper(
+        payload,
+        {
+          onMeta: (meta) => {
+            sessionId.value = meta.session_id
+            if (meta.persona_id) {
+              selectedPersonaId.value = meta.persona_id
+            }
+            if (meta.prompt_preview) {
+              userBubble.content = meta.prompt_preview
+            }
+            assistantMsg.loveProfileInjected = Boolean(meta.love_profile_injected)
+            assistantMsg.emotionCare = meta.emotion_care ?? null
+            if (meta.model) {
+              const pPrefix = meta.persona_name ? `${meta.persona_name} · ` : ''
+              assistantMsg.modelLabel = `${pPrefix}${meta.config_name || 'AI'} (${meta.model})${meta.is_mock ? ' · 演示' : ''}`
+            }
+          },
+          onReasoning: (chunk) => {
+            assistantMsg.reasoning = (assistantMsg.reasoning || '') + chunk
+            void scrollToBottom()
+          },
+          onDelta: (chunk) => {
+            assistantMsg.content += chunk
+            void scrollToBottom()
+          },
+          onUsage: (total) => {
+            assistantMsg.tokenUsage = total
+          },
+          onError: (errMsg) => {
+            assistantMsg.isError = true
+            assistantMsg.content = assistantMsg.content
+              ? `${assistantMsg.content}\n\n⚠️ ${errMsg}`
+              : `⚠️ ${errMsg}`
+          },
+        },
+        abortController.signal,
+      )
+    } else {
+      const res = await sendReplyHelper(payload)
+      sessionId.value = res.session_id
+      if (res.persona_id) {
+        selectedPersonaId.value = res.persona_id
+      }
+      assistantMsg.reasoning = res.reasoning || ''
+      assistantMsg.content = res.reply
+      assistantMsg.tokenUsage = res.token_usage || undefined
+      assistantMsg.loveProfileInjected = Boolean(res.love_profile_injected)
+      assistantMsg.emotionCare = res.emotion_care ?? null
+      const pPrefix = res.persona_name ? `${res.persona_name} · ` : ''
+      assistantMsg.modelLabel = `${pPrefix}${res.config_name || 'AI'} (${res.model})${res.is_mock ? ' · 演示' : ''}`
+      await scrollToBottom()
+    }
+    replyForm.partner_message = ''
+    replyForm.context = ''
+    replyForm.my_intent = ''
     void Promise.all([loadConversations(), loadQuota()])
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
@@ -375,7 +756,14 @@ function handleMessageAreaClick(event: MouseEvent) {
 }
 
 onMounted(() => {
-  void Promise.all([loadModels(), loadPersonas(), loadConversations(), loadQuota()])
+  void Promise.all([
+    loadModels(),
+    loadPersonas(),
+    loadConversations(),
+    loadQuota(),
+    loadLoveProfile(),
+    loadReplyPresets(),
+  ])
 })
 
 onBeforeUnmount(() => {
@@ -401,6 +789,18 @@ onBeforeUnmount(() => {
         >
           {{ quotaSummaryText }}
         </el-tag>
+        <el-button
+          :type="loveProfileActive ? 'primary' : 'default'"
+          plain
+          size="small"
+          :icon="Postcard"
+          @click="openLoveProfileDrawer"
+        >
+          {{ loveProfileBadgeText }}
+        </el-button>
+        <el-button plain size="small" :icon="ChatDotRound" @click="replyHelperVisible = true">
+          帮我回消息
+        </el-button>
         <el-button plain size="small" :icon="MagicStick" @click="plazaDrawerVisible = true">
           智能体广场
         </el-button>
@@ -450,13 +850,29 @@ onBeforeUnmount(() => {
             v-for="conv in conversations"
             :key="conv.session_id"
             class="history-item"
-            :class="{ 'is-active': sessionId === conv.session_id }"
+            :class="{ 'is-active': sessionId === conv.session_id, 'is-pinned': conv.is_pinned }"
             @click="selectConversation(conv)"
           >
-            <div class="history-title" :title="conv.title">{{ conv.title }}</div>
+            <div class="history-title-row">
+              <span v-if="conv.is_pinned" class="pin-mark" title="已置顶">📌</span>
+              <span class="history-title" :title="conv.title">{{ conv.title }}</span>
+            </div>
+            <div v-if="conv.persona_name" class="history-persona-badge">
+              <span>{{ resolvePersonaEmoji(conv.persona_id) }}</span>
+              <span>{{ conv.persona_name }}</span>
+            </div>
             <div class="history-meta">
               <span class="mono-num history-model">{{ conv.model_name || 'AI' }}</span>
               <span class="history-ops" @click.stop>
+                <el-button
+                  link
+                  size="small"
+                  :type="conv.is_pinned ? 'warning' : 'info'"
+                  :title="conv.is_pinned ? '取消置顶' : '置顶会话'"
+                  @click="handleTogglePin(conv)"
+                >
+                  {{ conv.is_pinned ? '取消' : '置顶' }}
+                </el-button>
                 <el-button
                   link
                   size="small"
@@ -536,8 +952,13 @@ onBeforeUnmount(() => {
             :class="msg.role === 'user' ? 'is-user' : 'is-assistant'"
           >
             <div class="bubble">
-              <div class="bubble-role">
-                {{ msg.role === 'user' ? '我' : msg.modelLabel || 'AILOVE Assistant' }}
+              <div class="bubble-role-row">
+                <span class="bubble-role">
+                  {{ msg.role === 'user' ? '我' : msg.modelLabel || 'AILOVE Assistant' }}
+                </span>
+                <span v-if="msg.role === 'assistant' && msg.loveProfileInjected" class="profile-injected-tag">
+                  💞 已结合情感档案
+                </span>
               </div>
               <details v-if="msg.reasoning" class="reasoning-box" open>
                 <summary>深度思考过程 (Reasoning)</summary>
@@ -557,6 +978,30 @@ onBeforeUnmount(() => {
                 class="markdown-body"
                 v-html="renderMarkdown(msg.content)"
               />
+
+              <!-- 情绪关怀护栏暖心提示卡 -->
+              <div
+                v-if="msg.role === 'assistant' && msg.emotionCare"
+                class="emotion-care-card"
+                :class="msg.emotionCare.level === 'crisis' ? 'is-crisis' : 'is-distress'"
+              >
+                <div class="emotion-care-title">
+                  {{ msg.emotionCare.level === 'crisis' ? '🤍' : '🌙' }} {{ msg.emotionCare.title }}
+                </div>
+                <p class="emotion-care-desc">{{ msg.emotionCare.message }}</p>
+                <div v-if="msg.emotionCare.hotlines?.length" class="emotion-hotlines">
+                  <button
+                    v-for="h in msg.emotionCare.hotlines"
+                    :key="h.name"
+                    type="button"
+                    class="hotline-pill"
+                    @click="copyText(h.phone)"
+                  >
+                    <span>{{ h.name }}</span>
+                    <strong class="mono-num">{{ h.phone }}</strong>
+                  </button>
+                </div>
+              </div>
 
               <div v-if="msg.role === 'assistant' && msg.content" class="bubble-actions">
                 <span v-if="msg.tokenUsage" class="bubble-token mono-num">
@@ -580,18 +1025,28 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div v-if="activePersona?.starter_prompts?.length" class="starter-bar">
-          <span class="starter-label">{{ activePersona.avatar_emoji }} 快捷提问：</span>
+        <div class="starter-bar">
           <button
-            v-for="sp in activePersona.starter_prompts"
-            :key="sp"
             type="button"
-            class="starter-chip"
+            class="reply-helper-trigger"
             :disabled="sending"
-            @click="quickAskStarter(sp)"
+            @click="replyHelperVisible = true"
           >
-            {{ sp }}
+            💬 帮我回消息 / 拆解潜台词
           </button>
+          <template v-if="activePersona?.starter_prompts?.length">
+            <span class="starter-label">{{ activePersona.avatar_emoji }} 快捷提问：</span>
+            <button
+              v-for="sp in activePersona.starter_prompts"
+              :key="sp"
+              type="button"
+              class="starter-chip"
+              :disabled="sending"
+              @click="quickAskStarter(sp)"
+            >
+              {{ sp }}
+            </button>
+          </template>
         </div>
 
         <div class="composer">
@@ -670,6 +1125,228 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </el-drawer>
+
+    <!-- 我的情感档案记忆卡抽屉 -->
+    <el-drawer v-model="loveProfileDrawerVisible" title="💞 我的情感背景记忆卡" size="460px">
+      <div class="love-drawer-body">
+        <div class="love-switch-banner">
+          <div>
+            <div class="love-switch-title">自动注入 AI 对话上下文</div>
+            <div class="love-switch-desc">
+              开启后，5 大情感智能体将自动结合你的真实处境，无需每次重复交代前情
+            </div>
+          </div>
+          <el-switch v-model="loveForm.auto_inject" />
+        </div>
+
+        <el-form label-position="top" class="love-form">
+          <el-form-item label="当前所处的情感阶段">
+            <div class="chip-grid">
+              <button
+                v-for="st in lovePresets.stages"
+                :key="st.code"
+                type="button"
+                class="persona-chip"
+                :class="{ 'is-active': loveForm.relationship_stage === st.code }"
+                @click="
+                  loveForm.relationship_stage =
+                    loveForm.relationship_stage === st.code ? '' : st.code
+                "
+              >
+                <span>{{ st.emoji }}</span>
+                <span>{{ st.label }}</span>
+              </button>
+            </div>
+          </el-form-item>
+
+          <el-form-item label="对方称呼（可选，用于个性化称呼）">
+            <el-input
+              v-model="loveForm.partner_nickname"
+              maxlength="32"
+              placeholder="例如：TA、小林、学姐、男朋友"
+              clearable
+            />
+          </el-form-item>
+
+          <el-form-item label="对方性格 / 依恋特点（可多选，最多 8 个）">
+            <div class="chip-grid">
+              <button
+                v-for="tag in lovePresets.partner_trait_presets"
+                :key="tag"
+                type="button"
+                class="persona-chip"
+                :class="{ 'is-active': loveForm.partner_traits.includes(tag) }"
+                @click="toggleTraitTag(loveForm.partner_traits, tag)"
+              >
+                {{ tag }}
+              </button>
+            </div>
+            <div v-if="loveForm.partner_traits.length" class="selected-tags-row">
+              <el-tag
+                v-for="t in loveForm.partner_traits"
+                :key="t"
+                size="small"
+                closable
+                effect="plain"
+                @close="toggleTraitTag(loveForm.partner_traits, t)"
+              >
+                {{ t }}
+              </el-tag>
+            </div>
+            <div class="custom-tag-row">
+              <el-input
+                v-model="customPartnerTrait"
+                size="small"
+                maxlength="24"
+                placeholder="补充自定义标签，回车添加"
+                @keydown.enter.prevent="addCustomPartnerTrait"
+              />
+              <el-button size="small" plain @click="addCustomPartnerTrait">添加</el-button>
+            </div>
+          </el-form-item>
+
+          <el-form-item label="我自己的沟通特点（帮助 AI 避免制造内耗）">
+            <div class="chip-grid">
+              <button
+                v-for="tag in lovePresets.my_trait_presets"
+                :key="tag"
+                type="button"
+                class="persona-chip"
+                :class="{ 'is-active': loveForm.my_traits.includes(tag) }"
+                @click="toggleTraitTag(loveForm.my_traits, tag)"
+              >
+                {{ tag }}
+              </button>
+            </div>
+          </el-form-item>
+
+          <el-form-item label="当前最核心的情感诉求 / 目标">
+            <el-input
+              v-model="loveForm.relationship_goal"
+              maxlength="160"
+              placeholder="例如：自然推进确认关系 / 化解冷战僵局 / 找回恋爱新鲜感"
+              clearable
+            />
+          </el-form-item>
+
+          <el-form-item label="沟通雷区与注意事项">
+            <el-input
+              v-model="loveForm.communication_taboos"
+              maxlength="300"
+              placeholder="例如：对方反感连环追问和说教；异地时差 2 小时"
+              clearable
+            />
+          </el-form-item>
+
+          <el-form-item label="补充背景摘要">
+            <el-input
+              v-model="loveForm.background_notes"
+              type="textarea"
+              :rows="3"
+              maxlength="1200"
+              show-word-limit
+              placeholder="简述你们认识多久、最近卡在哪件事上，仅保存在你个人账号下严格隔离"
+            />
+          </el-form-item>
+        </el-form>
+
+        <div class="love-drawer-footer">
+          <el-button type="danger" plain @click="handleClearLoveProfile">清空档案</el-button>
+          <el-button type="primary" :loading="loveProfileSaving" @click="handleSaveLoveProfile">
+            保存并生效
+          </el-button>
+        </div>
+      </div>
+    </el-drawer>
+
+    <!-- 「帮我回消息 / 聊天记录拆解」快捷弹窗 -->
+    <el-dialog
+      v-model="replyHelperVisible"
+      title="💬 帮我回消息 · 潜台词拆解与高情商备选"
+      width="580px"
+      destroy-on-close
+    >
+      <el-form label-position="top">
+        <el-form-item label="粘贴对方发来的原话 / 聊天片段" required>
+          <el-input
+            v-model="replyForm.partner_message"
+            type="textarea"
+            :rows="3"
+            maxlength="2000"
+            show-word-limit
+            placeholder="例如：最近项目真的太忙了，改天有空再约你吧"
+          />
+        </el-form-item>
+
+        <el-form-item label="当前互动场景">
+          <div class="chip-grid">
+            <button
+              v-for="sc in replyPresets.scenes"
+              :key="sc.code"
+              type="button"
+              class="persona-chip"
+              :class="{ 'is-active': replyForm.scene === sc.code }"
+              :title="sc.desc"
+              @click="replyForm.scene = sc.code"
+            >
+              {{ sc.label }}
+            </button>
+          </div>
+        </el-form-item>
+
+        <el-form-item label="期望回复语气">
+          <div class="tone-grid">
+            <button
+              v-for="tn in replyPresets.tones"
+              :key="tn.code"
+              type="button"
+              class="tone-card"
+              :class="{ 'is-active': replyForm.tone === tn.code }"
+              @click="replyForm.tone = tn.code"
+            >
+              <span class="tone-name">{{ tn.label }}</span>
+              <span class="tone-desc">{{ tn.desc }}</span>
+            </button>
+          </div>
+        </el-form-item>
+
+        <el-form-item label="我真实想表达的核心意思（可选）">
+          <el-input
+            v-model="replyForm.my_intent"
+            maxlength="400"
+            placeholder="例如：想体面收尾不显得粘人，同时留个轻松小钩子"
+            clearable
+          />
+        </el-form-item>
+
+        <el-form-item label="前文背景补充（可选）">
+          <el-input
+            v-model="replyForm.context"
+            maxlength="800"
+            placeholder="例如：之前聊得很热络，这两天回复间隔突然拉长"
+            clearable
+          />
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <div class="reply-dialog-footer">
+          <span class="reply-dialog-hint">
+            {{
+              loveProfileActive
+                ? '💞 将自动结合你的情感档案记忆卡生成建议'
+                : '💡 搭配「情感档案」记忆卡效果更贴合'
+            }}
+          </span>
+          <div>
+            <el-button @click="replyHelperVisible = false">取消</el-button>
+            <el-button type="primary" :loading="sending" @click="handleSubmitReplyHelper">
+              立即拆解并生成 3 条回复
+            </el-button>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -1198,5 +1875,236 @@ onBeforeUnmount(() => {
   font-size: 12.5px;
   color: var(--ailove-ink-secondary);
   line-height: 1.5;
+}
+
+.history-item.is-pinned {
+  border-left: 3px solid var(--ailove-brand-500);
+}
+
+.history-title-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pin-mark {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.history-persona-badge {
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(200, 53, 83, 0.08);
+  color: var(--ailove-brand-600);
+  font-size: 11px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bubble-role-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.bubble-role-row .bubble-role {
+  margin-bottom: 0;
+}
+
+.profile-injected-tag {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--ailove-brand-50);
+  color: var(--ailove-brand-600);
+  border: 1px solid var(--ailove-brand-200);
+  white-space: nowrap;
+}
+
+.emotion-care-card {
+  margin-top: 10px;
+  padding: 11px 13px;
+  border-radius: 12px;
+  border: 1px solid #f2c6cf;
+  background: linear-gradient(135deg, #fff6f7 0%, #fffaf4 100%);
+}
+
+.emotion-care-card.is-crisis {
+  border-color: #d84361;
+  background: linear-gradient(135deg, #fff1f3 0%, #fff7ed 100%);
+  box-shadow: 0 3px 12px rgba(200, 53, 83, 0.12);
+}
+
+.emotion-care-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #9f1f3a;
+  margin-bottom: 4px;
+}
+
+.emotion-care-desc {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ailove-ink-secondary);
+}
+
+.emotion-hotlines {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hotline-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid #efc2cb;
+  background: #ffffff;
+  color: #9f1f3a;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.hotline-pill:hover {
+  background: #fff1f3;
+  border-color: #c83553;
+}
+
+.reply-helper-trigger {
+  border: 1px solid var(--ailove-brand-400);
+  background: linear-gradient(135deg, #fff2f5 0%, #ffe8ee 100%);
+  color: var(--ailove-brand-600);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.reply-helper-trigger:hover:not(:disabled) {
+  background: var(--ailove-brand-600);
+  color: #ffffff;
+}
+
+.love-drawer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.love-switch-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--ailove-brand-50);
+  border: 1px solid var(--ailove-brand-200);
+}
+
+.love-switch-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ailove-ink-primary);
+}
+
+.love-switch-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--ailove-ink-secondary);
+  line-height: 1.5;
+}
+
+.chip-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.selected-tags-row {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.custom-tag-row {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.love-drawer-footer {
+  display: flex;
+  justify-content: space-between;
+  padding-top: 10px;
+  border-top: 1px solid var(--ailove-border);
+}
+
+.tone-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+.tone-card {
+  text-align: left;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--ailove-border);
+  background: var(--ailove-subtle);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transition: all 0.15s;
+}
+
+.tone-card:hover,
+.tone-card.is-active {
+  border-color: var(--ailove-brand-500);
+  background: var(--ailove-brand-50);
+}
+
+.tone-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ailove-ink-primary);
+}
+
+.tone-desc {
+  font-size: 11.5px;
+  color: var(--ailove-ink-secondary);
+  line-height: 1.4;
+}
+
+.reply-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.reply-dialog-hint {
+  font-size: 12px;
+  color: var(--ailove-ink-muted);
 }
 </style>

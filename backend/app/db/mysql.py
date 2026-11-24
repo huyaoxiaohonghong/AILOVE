@@ -72,13 +72,40 @@ async def check_mysql_health() -> tuple[bool, str]:
         return False, f"disconnected ({type(exc).__name__})"
 
 
+_AI_CONVERSATIONS_EXTRA_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("persona_id", "BIGINT NULL COMMENT '绑定的智能体ID'"),
+    ("persona_name", "VARCHAR(64) NOT NULL DEFAULT '' COMMENT '绑定的智能体名称快照'"),
+    ("is_pinned", "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否置顶会话'"),
+)
+
+
+async def _ensure_incremental_columns() -> None:
+    """为历史存量表幂等补齐新增列（弥补 create_all 不修改已有表的局限）。"""
+    engine = init_mysql()
+    async with engine.begin() as conn:
+        rows = await conn.execute(
+            text(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ai_conversations'"
+            )
+        )
+        existing = {str(r[0]).lower() for r in rows.fetchall()}
+        if not existing:
+            return
+        for col_name, ddl in _AI_CONVERSATIONS_EXTRA_COLUMNS:
+            if col_name not in existing:
+                await conn.execute(text(f"ALTER TABLE `ai_conversations` ADD COLUMN `{col_name}` {ddl}"))
+                logger.info("Schema upgrade: added column ai_conversations.%s", col_name)
+
+
 async def ensure_tables() -> None:
-    """确保 ORM 定义的数据表在 MySQL 中存在（幂等创建缺失表）。"""
+    """确保 ORM 定义的数据表与增量字段在 MySQL 中就绪（幂等执行）。"""
     from app.models import Base  # noqa: PLC0415
 
     engine = init_mysql()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await _ensure_incremental_columns()
 
 
 async def dispose_mysql() -> None:

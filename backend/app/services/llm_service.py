@@ -18,13 +18,23 @@ from app.db.mysql import get_session_factory
 from app.db.redis import cache_delete, cache_get_json, cache_set_json
 from app.models.ai_chat import AIConversation
 from app.models.ai_chat import AIMessage as DBAIMessage
-from app.schemas.ai import ChatRequest, ChatResponse
-from app.services import ai_persona_service, ai_usage_service, sys_config_service
+from app.schemas.ai import ChatRequest, ChatResponse, ReplyHelperRequest
+from app.services import (
+    ai_persona_service,
+    ai_usage_service,
+    love_profile_service,
+    sys_config_service,
+)
 from app.services.ai_config_service import RuntimeAIConfig, resolve_runtime_config
 from app.services.ai_providers import (
     BaseProviderAdapter,
     get_provider_adapter,
     humanize_llm_error,
+)
+from app.services.emotion_guard import (
+    build_reply_helper_prompt,
+    evaluate_emotion_care,
+    strip_emotion_care_for_client,
 )
 
 logger = logging.getLogger(__name__)
@@ -112,14 +122,20 @@ class LLMService:
         tz_name: str | None = None,
         *,
         inject_clock: bool = True,
+        extra_system_blocks: list[str] | None = None,
     ) -> list[BaseMessage]:
         messages: list[BaseMessage] = []
+        blocks: list[str] = []
         base_prompt = system_prompt.strip()
+        if base_prompt:
+            blocks.append(base_prompt)
+        for extra in extra_system_blocks or []:
+            clean_extra = extra.strip()
+            if clean_extra:
+                blocks.append(clean_extra)
         if inject_clock:
-            clock_prompt = build_realtime_clock_prompt(tz_name)
-            full_system = f"{base_prompt}\n\n{clock_prompt}" if base_prompt else clock_prompt
-        else:
-            full_system = base_prompt
+            blocks.append(build_realtime_clock_prompt(tz_name))
+        full_system = "\n\n".join(blocks)
         if full_system:
             messages.append(SystemMessage(content=full_system))
         for item in history:
@@ -150,11 +166,14 @@ class LLMService:
         user_content: str,
         assistant_content: str,
         token_usage: int = 0,
+        persona_id: int | None = None,
+        persona_name: str = "",
     ) -> None:
         """将会话与问答消息持久化到 MySQL（MySQL 不可用时降级保存至内存会话仓库）。"""
         now = datetime.now(UTC).replace(tzinfo=None)
         utype = (user_type or "web")[:16]
         uid = int(user_id or 0)
+        clean_pname = (persona_name or "")[:64]
         try:
             factory = get_session_factory()
             async with factory() as session:
@@ -168,8 +187,11 @@ class LLMService:
                         session_id=session_id,
                         user_type=utype,
                         user_id=uid,
-                        title=user_content.strip()[:60] or "新对话",
+                        title=user_content.strip().replace("\n", " ")[:60] or "新对话",
                         model_name=model_name[:64],
+                        persona_id=persona_id,
+                        persona_name=clean_pname,
+                        is_pinned=False,
                     )
                     session.add(conv)
                     await session.flush()
@@ -177,6 +199,8 @@ class LLMService:
                     return
                 else:
                     conv.model_name = model_name[:64]
+                    conv.persona_id = persona_id
+                    conv.persona_name = clean_pname
                     conv.updated_at = now
 
                 session.add(
@@ -206,8 +230,11 @@ class LLMService:
                     "session_id": session_id,
                     "user_type": utype,
                     "user_id": uid,
-                    "title": user_content.strip()[:60] or "新对话",
+                    "title": user_content.strip().replace("\n", " ")[:60] or "新对话",
                     "model_name": model_name[:64],
+                    "persona_id": persona_id,
+                    "persona_name": clean_pname,
+                    "is_pinned": False,
                     "messages": [],
                     "created_at": now_iso,
                     "updated_at": now_iso,
@@ -215,6 +242,8 @@ class LLMService:
                 _mem_conversations[mem_key] = rec
             else:
                 rec["model_name"] = model_name[:64]
+                rec["persona_id"] = persona_id
+                rec["persona_name"] = clean_pname
                 rec["updated_at"] = now_iso
             rec["messages"].append(
                 {
@@ -236,7 +265,7 @@ class LLMService:
     async def list_conversations(
         self, user_type: str, user_id: int, limit: int = 30
     ) -> list[dict[str, Any]]:
-        """列出当前用户本人的 AI 历史会话（按最近活跃倒序）。"""
+        """列出当前用户本人的 AI 历史会话（置顶优先，其次按最近活跃倒序）。"""
         utype = (user_type or "web")[:16]
         uid = int(user_id or 0)
         try:
@@ -248,7 +277,11 @@ class LLMService:
                         AIConversation.user_type == utype,
                         AIConversation.user_id == uid,
                     )
-                    .order_by(desc(AIConversation.updated_at), desc(AIConversation.id))
+                    .order_by(
+                        desc(AIConversation.is_pinned),
+                        desc(AIConversation.updated_at),
+                        desc(AIConversation.id),
+                    )
                     .limit(limit)
                 )
                 rows = (await session.execute(stmt)).scalars().all()
@@ -257,6 +290,9 @@ class LLMService:
                         "session_id": r.session_id,
                         "title": r.title,
                         "model_name": r.model_name,
+                        "persona_id": r.persona_id,
+                        "persona_name": r.persona_name or "",
+                        "is_pinned": bool(r.is_pinned),
                         "created_at": r.created_at.isoformat() if r.created_at else "",
                         "updated_at": r.updated_at.isoformat() if r.updated_at else "",
                     }
@@ -268,13 +304,16 @@ class LLMService:
                     "session_id": rec["session_id"],
                     "title": rec["title"],
                     "model_name": rec["model_name"],
+                    "persona_id": rec.get("persona_id"),
+                    "persona_name": rec.get("persona_name", ""),
+                    "is_pinned": bool(rec.get("is_pinned", False)),
                     "created_at": rec["created_at"],
                     "updated_at": rec["updated_at"],
                 }
                 for rec in _mem_conversations.values()
                 if rec["user_type"] == utype and rec["user_id"] == uid
             ]
-            items.sort(key=lambda x: x["updated_at"], reverse=True)
+            items.sort(key=lambda x: (x["is_pinned"], x["updated_at"]), reverse=True)
             return items[:limit]
 
     async def get_conversation_messages(
@@ -324,6 +363,9 @@ class LLMService:
                     "session_id": conv.session_id,
                     "title": conv.title,
                     "model_name": conv.model_name,
+                    "persona_id": conv.persona_id,
+                    "persona_name": conv.persona_name or "",
+                    "is_pinned": bool(conv.is_pinned),
                     "messages": msg_list,
                 }
         except (SQLAlchemyError, OSError):
@@ -341,15 +383,36 @@ class LLMService:
                 "session_id": rec["session_id"],
                 "title": rec["title"],
                 "model_name": rec["model_name"],
+                "persona_id": rec.get("persona_id"),
+                "persona_name": rec.get("persona_name", ""),
+                "is_pinned": bool(rec.get("is_pinned", False)),
                 "messages": list(msgs),
             }
 
-    async def rename_conversation(
-        self, session_id: str, user_type: str, user_id: int, title: str
+    async def update_conversation(
+        self,
+        session_id: str,
+        user_type: str,
+        user_id: int,
+        *,
+        title: str | None = None,
+        is_pinned: bool | None = None,
+        persona_id: int | None = None,
+        clear_persona: bool = False,
     ) -> dict[str, Any] | None:
+        """更新会话标题、置顶状态或绑定智能体。"""
         utype = (user_type or "web")[:16]
         uid = int(user_id or 0)
-        clean_title = title.strip()[:120] or "新对话"
+        clean_title = title.strip()[:120] if title is not None else None
+        resolved_persona_name: str | None = None
+        if clear_persona:
+            persona_id = None
+            resolved_persona_name = ""
+        elif persona_id is not None:
+            persona = await ai_persona_service.get_persona(persona_id, require_enabled=False)
+            persona_id = int(persona["id"])
+            resolved_persona_name = str(persona["name"])[:64]
+
         try:
             factory = get_session_factory()
             async with factory() as session:
@@ -364,25 +427,47 @@ class LLMService:
                 ).scalar_one_or_none()
                 if conv is None:
                     return None
-                conv.title = clean_title
+                if clean_title is not None:
+                    conv.title = clean_title or "新对话"
+                if is_pinned is not None:
+                    conv.is_pinned = bool(is_pinned)
+                if clear_persona or persona_id is not None:
+                    conv.persona_id = persona_id
+                    conv.persona_name = resolved_persona_name or ""
                 await session.commit()
                 return {
                     "session_id": conv.session_id,
                     "title": conv.title,
                     "model_name": conv.model_name,
+                    "persona_id": conv.persona_id,
+                    "persona_name": conv.persona_name or "",
+                    "is_pinned": bool(conv.is_pinned),
                 }
         except (SQLAlchemyError, OSError):
             mem_key = f"{build_owner_scope(utype, uid)}:{session_id}"
             rec = _mem_conversations.get(mem_key)
             if rec is None:
                 return None
-            rec["title"] = clean_title
-            rec["updated_at"] = datetime.now(UTC).isoformat()
+            if clean_title is not None:
+                rec["title"] = clean_title or "新对话"
+            if is_pinned is not None:
+                rec["is_pinned"] = bool(is_pinned)
+            if clear_persona or persona_id is not None:
+                rec["persona_id"] = persona_id
+                rec["persona_name"] = resolved_persona_name or ""
             return {
                 "session_id": rec["session_id"],
                 "title": rec["title"],
                 "model_name": rec["model_name"],
+                "persona_id": rec.get("persona_id"),
+                "persona_name": rec.get("persona_name", ""),
+                "is_pinned": bool(rec.get("is_pinned", False)),
             }
+
+    async def rename_conversation(
+        self, session_id: str, user_type: str, user_id: int, title: str
+    ) -> dict[str, Any] | None:
+        return await self.update_conversation(session_id, user_type, user_id, title=title)
 
     async def delete_conversation(
         self, session_id: str, user_type: str, user_id: int
@@ -511,6 +596,68 @@ class LLMService:
 
         return persona_id, persona_name, system_prompt, temperature
 
+    async def _prepare_love_and_safety_context(
+        self,
+        req: ChatRequest,
+        *,
+        user_type: str,
+        user_id: int,
+        extra_system_instruction: str = "",
+    ) -> tuple[bool, dict[str, Any] | None, list[str]]:
+        """组装用户情感档案上下文、帮我回消息格式规范与情绪安全关怀护栏。"""
+        extra_blocks: list[str] = []
+        love_profile_injected = False
+
+        profile = await love_profile_service.get_love_profile(user_type, user_id)
+        should_inject = bool(profile.get("is_configured")) and (
+            req.use_love_profile
+            if req.use_love_profile is not None
+            else bool(profile.get("auto_inject", True))
+        )
+        if should_inject:
+            profile_prompt = love_profile_service.build_love_profile_prompt(profile)
+            if profile_prompt:
+                extra_blocks.append(profile_prompt)
+                love_profile_injected = True
+
+        if extra_system_instruction.strip():
+            extra_blocks.append(extra_system_instruction.strip())
+
+        care = evaluate_emotion_care(req.message)
+        if care and care.get("prompt_guidance"):
+            extra_blocks.append(str(care["prompt_guidance"]))
+
+        return love_profile_injected, strip_emotion_care_for_client(care), extra_blocks
+
+    async def build_reply_helper_chat_request(
+        self, req: ReplyHelperRequest
+    ) -> tuple[ChatRequest, str]:
+        """将「帮我回消息」结构化请求转换为标准 ChatRequest + 拆解格式指令。"""
+        user_message, extra_instruction = build_reply_helper_prompt(
+            partner_message=req.partner_message,
+            scene=req.scene,
+            tone=req.tone,
+            context=req.context,
+            my_intent=req.my_intent,
+        )
+        persona_id = req.persona_id
+        if persona_id is None:
+            enabled_personas = await ai_persona_service.list_personas(enabled_only=True)
+            for item in enabled_personas:
+                if item.get("code") == "love_chat_coach":
+                    persona_id = int(item["id"])
+                    break
+
+        chat_req = ChatRequest(
+            message=user_message,
+            session_id=req.session_id,
+            config_id=req.config_id,
+            persona_id=persona_id,
+            timezone=req.timezone,
+            use_love_profile=req.use_love_profile,
+        )
+        return chat_req, extra_instruction
+
     async def chat(
         self,
         req: ChatRequest,
@@ -519,6 +666,7 @@ class LLMService:
         user_id: int = 0,
         username: str = "",
         role: str = "user",
+        extra_system_instruction: str = "",
     ) -> ChatResponse:
         inject_clock, effective_tz = await self._resolve_ai_runtime_policies(
             req.message, req.timezone
@@ -527,6 +675,14 @@ class LLMService:
         owner = build_owner_scope(user_type, user_id)
         persona_id, persona_name, system_prompt, temperature = (
             await self._resolve_persona_and_quota(req, owner=owner, role=role, cfg=cfg)
+        )
+        love_profile_injected, emotion_care, extra_blocks = (
+            await self._prepare_love_and_safety_context(
+                req,
+                user_type=user_type,
+                user_id=user_id,
+                extra_system_instruction=extra_system_instruction,
+            )
         )
         session_id = req.session_id or uuid.uuid4().hex
         history = await self.get_history(session_id, owner)
@@ -548,6 +704,7 @@ class LLMService:
                 req.message,
                 tz_name=effective_tz,
                 inject_clock=inject_clock,
+                extra_system_blocks=extra_blocks,
             )
             try:
                 ai_msg = await llm.ainvoke(messages)
@@ -583,6 +740,8 @@ class LLMService:
             user_content=req.message,
             assistant_content=reply,
             token_usage=token_usage,
+            persona_id=persona_id,
+            persona_name=persona_name,
         )
         if persona_id is not None:
             await ai_persona_service.increment_persona_usage(persona_id)
@@ -619,6 +778,8 @@ class LLMService:
             is_mock=is_mock,
             history_length=len(history),
             token_usage=token_usage,
+            love_profile_injected=love_profile_injected,
+            emotion_care=emotion_care,
         )
 
     async def stream_chat(
@@ -629,6 +790,7 @@ class LLMService:
         user_id: int = 0,
         username: str = "",
         role: str = "user",
+        extra_system_instruction: str = "",
     ) -> tuple[str, RuntimeAIConfig, dict[str, Any], AsyncGenerator[tuple[str, str], None]]:
         """流式对话生成器，逐块产出 (event_type: 'reasoning' | 'delta' | 'usage', text_chunk)。"""
         inject_clock, effective_tz = await self._resolve_ai_runtime_policies(
@@ -638,6 +800,14 @@ class LLMService:
         owner = build_owner_scope(user_type, user_id)
         persona_id, persona_name, system_prompt, temperature = (
             await self._resolve_persona_and_quota(req, owner=owner, role=role, cfg=cfg)
+        )
+        love_profile_injected, emotion_care, extra_blocks = (
+            await self._prepare_love_and_safety_context(
+                req,
+                user_type=user_type,
+                user_id=user_id,
+                extra_system_instruction=extra_system_instruction,
+            )
         )
         session_id = req.session_id or uuid.uuid4().hex
         history = await self.get_history(session_id, owner)
@@ -664,6 +834,7 @@ class LLMService:
                     req.message,
                     tz_name=effective_tz,
                     inject_clock=inject_clock,
+                    extra_system_blocks=extra_blocks,
                 )
                 try:
                     async for chunk in llm.astream(messages):
@@ -712,6 +883,8 @@ class LLMService:
                 user_content=req.message,
                 assistant_content=full_reply,
                 token_usage=token_usage,
+                persona_id=persona_id,
+                persona_name=persona_name,
             )
             if persona_id is not None:
                 await ai_persona_service.increment_persona_usage(persona_id)
@@ -734,7 +907,13 @@ class LLMService:
                 call_status="success",
             )
 
-        return session_id, cfg, {"persona_id": persona_id, "persona_name": persona_name}, _generator()
+        meta = {
+            "persona_id": persona_id,
+            "persona_name": persona_name,
+            "love_profile_injected": love_profile_injected,
+            "emotion_care": emotion_care,
+        }
+        return session_id, cfg, meta, _generator()
 
 
 llm_service = LLMService()

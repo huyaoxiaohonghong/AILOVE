@@ -6,6 +6,7 @@ from app.models.ai_usage_log import AIUsageLog
 from app.models.audit_log import AuditLog
 from app.models.base import Base
 from app.models.login_log import LoginLog
+from app.models.love_profile import UserLoveProfile
 from app.models.rbac import SysRole
 from app.models.sys_config import SysConfig
 from app.models.user import User
@@ -22,6 +23,7 @@ __all__ = [
     "AIModelConfig",
     "AIPersona",
     "AIUsageLog",
+    "UserLoveProfile",
     "SysRole",
     "SysConfig",
     "AuditLog",
