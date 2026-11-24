@@ -1,0 +1,136 @@
+.switch-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20rpx;
+  padding: 24rpx 28rpx;
+  border-radius: 24rpx;
+  background: linear-gradient(135deg, #fff1f4 0%, #fff8f2 100%);
+  border: 1rpx solid #f5ccd6;
+  margin-bottom: 24rpx;
+}
+
+.switch-left {
+  flex: 1;
+}
+
+.switch-title {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #a92442;
+  margin-bottom: 6rpx;
+}
+
+.switch-desc {
+  font-size: 23rpx;
+  color: #6b5867;
+  line-height: 1.5;
+}
+
+.field-label {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: #2b2130;
+  margin-bottom: 14rpx;
+}
+
+.text-input {
+  width: 100%;
+  height: 76rpx;
+  padding: 0 22rpx;
+  box-sizing: border-box;
+  border-radius: 16rpx;
+  background: #faf5f7;
+  border: 1rpx solid #efe2e7;
+  font-size: 26rpx;
+  color: #1d1720;
+}
+
+.chosen-row {
+  margin-top: 14rpx;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10rpx;
+}
+
+.chosen-label {
+  font-size: 22rpx;
+  color: #8c8091;
+}
+
+.chosen-pill {
+  padding: 6rpx 16rpx;
+  border-radius: 999rpx;
+  background: #ffe8ee;
+  color: #c83553;
+  font-size: 22rpx;
+  font-weight: 600;
+}
+
+.custom-row {
+  margin-top: 14rpx;
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+}
+
+.custom-input {
+  flex: 1;
+  height: 70rpx;
+  padding: 0 20rpx;
+  border-radius: 14rpx;
+  background: #faf5f7;
+  border: 1rpx solid #efe2e7;
+  font-size: 24rpx;
+}
+
+.add-tag-btn {
+  width: 120rpx;
+  height: 70rpx;
+  line-height: 70rpx;
+  padding: 0;
+  margin: 0;
+  border-radius: 14rpx;
+  background: #fff1f4;
+  color: #c83553;
+  border: 1rpx solid #f3bcc9;
+  font-size: 24rpx;
+  font-weight: 600;
+}
+
+.add-tag-btn::after {
+  border: none;
+}
+
+.notes-textarea {
+  width: 100%;
+  min-height: 160rpx;
+  padding: 20rpx;
+  box-sizing: border-box;
+  border-radius: 16rpx;
+  background: #faf5f7;
+  border: 1rpx solid #efe2e7;
+  font-size: 26rpx;
+  line-height: 1.6;
+}
+
+.footer-actions {
+  display: flex;
+  gap: 20rpx;
+  margin-top: 10rpx;
+}
+
+.clear-btn {
+  width: 220rpx;
+  height: 84rpx;
+  line-height: 84rpx;
+  margin: 0;
+}
+
+.save-btn {
+  flex: 1;
+  height: 84rpx;
+  line-height: 84rpx;
+  margin: 0;
+}

@@ -2,30 +2,32 @@
   "pages": [
     "pages/index/index",
     "pages/chat/chat",
-    "pages/profile/profile"
+    "pages/profile/profile",
+    "pages/reply-helper/reply-helper",
+    "pages/love-profile/love-profile"
   ],
   "window": {
     "navigationBarBackgroundColor": "#ffffff",
     "navigationBarTitleText": "AILOVE",
     "navigationBarTextStyle": "black",
-    "backgroundColor": "#f5f7fb",
+    "backgroundColor": "#faf7f8",
     "backgroundTextStyle": "dark"
   },
   "tabBar": {
-    "color": "#8c93a4",
-    "selectedColor": "#4f46e5",
+    "color": "#8c8291",
+    "selectedColor": "#c83553",
     "backgroundColor": "#ffffff",
     "borderStyle": "black",
     "list": [
       {
         "pagePath": "pages/index/index",
-        "text": "首页",
+        "text": "情感广场",
         "iconPath": "assets/icons/home.png",
         "selectedIconPath": "assets/icons/home-active.png"
       },
       {
         "pagePath": "pages/chat/chat",
-        "text": "AI 对话",
+        "text": "AI 咨询",
         "iconPath": "assets/icons/chat.png",
         "selectedIconPath": "assets/icons/chat-active.png"
       },

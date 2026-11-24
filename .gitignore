@@ -31,6 +31,7 @@ pnpm-debug.log*
 # WeChat Mini Program
 miniprogram/miniprogram_npm/
 miniprogram/project.private.config.json
+miniprogram/config/env.local.js
 
 # OS & Editors
 .DS_Store

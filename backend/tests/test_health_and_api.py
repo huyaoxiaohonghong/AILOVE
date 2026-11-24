@@ -234,9 +234,46 @@ async def test_miniapp_wx_login_and_profile():
         assert token
         assert data["user"]["openid"].startswith("dev_openid_")
 
-        profile_resp = await client.get(
-            "/api/v1/miniapp/user/profile",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        headers = {"Authorization": f"Bearer {token}"}
+        profile_resp = await client.get("/api/v1/miniapp/user/profile", headers=headers)
         assert profile_resp.status_code == 200
         assert profile_resp.json()["data"]["nickname"] == "测试用户"
+
+        # 更新小程序昵称并验证最新资料返回
+        patch_resp = await client.patch(
+            "/api/v1/miniapp/user/profile",
+            json={"nickname": "心动小宇"},
+            headers=headers,
+        )
+        assert patch_resp.status_code == 200
+        assert patch_resp.json()["data"]["nickname"] == "心动小宇"
+        fresh_resp = await client.get("/api/v1/miniapp/user/profile", headers=headers)
+        assert fresh_resp.json()["data"]["nickname"] == "心动小宇"
+
+        # 验证小程序 JWT 可顺畅调用 5 大恋爱智能体、配额、情感档案与帮我回消息全链路
+        personas_resp = await client.get("/api/v1/ai/personas", headers=headers)
+        assert personas_resp.status_code == 200
+        assert len(personas_resp.json()["data"]["items"]) >= 5
+
+        quota_resp = await client.get("/api/v1/ai/quota", headers=headers)
+        assert quota_resp.status_code == 200
+
+        lp_save = await client.put(
+            "/api/v1/ai/love-profile",
+            json={"relationship_stage": "ambiguous", "partner_nickname": "小晴"},
+            headers=headers,
+        )
+        assert lp_save.status_code == 200
+        assert lp_save.json()["data"]["profile"]["is_configured"] is True
+
+        helper_resp = await client.post(
+            "/api/v1/ai/reply-helper",
+            json={"partner_message": "今晚加班好累呀", "scene": "ambiguous", "tone": "gentle"},
+            headers=headers,
+        )
+        assert helper_resp.status_code == 200
+        assert helper_resp.json()["data"]["love_profile_injected"] is True
+
+        conv_resp = await client.get("/api/v1/ai/conversations", headers=headers)
+        assert conv_resp.status_code == 200
+        assert len(conv_resp.json()["data"]["items"]) >= 1

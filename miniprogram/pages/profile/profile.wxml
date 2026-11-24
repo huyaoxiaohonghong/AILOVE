@@ -1,45 +1,125 @@
-<view class="container">
-  <view class="card profile-card">
-    <view class="avatar">
-      <text>{{avatarInitial}}</text>
-    </view>
-    <view class="profile-info">
-      <view class="profile-name">{{userInfo ? userInfo.nickname : '未登录用户'}}</view>
-      <view class="muted-text">
-        {{userInfo ? ('OpenID: ' + userInfo.openid) : '点击下方按钮完成微信登录'}}
+<view class="container safe-bottom">
+  <!-- 顶部个人信息卡片 -->
+  <view class="hero-profile">
+    <view class="profile-top">
+      <view class="avatar-circle">
+        <text>{{avatarInitial}}</text>
+      </view>
+      <view class="profile-meta">
+        <view class="name-row">
+          <text class="user-name">{{userInfo ? userInfo.nickname : '未登录访客'}}</text>
+          <text wx:if="{{userInfo}}" class="edit-name-btn" bindtap="handleEditNickname">改昵称</text>
+        </view>
+        <view class="user-sub">
+          {{userInfo ? ('ID: ' + maskedOpenid) : '一键微信登录，同步你的情感档案与咨询记录'}}
+        </view>
       </view>
     </view>
-    <status-badge
-      type="{{userInfo ? 'success' : 'warning'}}"
-      text="{{userInfo ? '已登录' : '未登录'}}"
-    />
-  </view>
 
-  <view class="card">
-    <view class="card-title">账号操作</view>
     <button
       wx:if="{{!userInfo}}"
-      class="primary-btn"
+      class="login-pill-btn"
       loading="{{loggingIn}}"
       bindtap="handleWxLogin"
     >
       微信一键登录
     </button>
-    <view wx:else class="btn-group">
-      <button class="ghost-btn" bindtap="handleRefreshProfile">刷新云端资料</button>
-      <button class="logout-btn" bindtap="handleLogout">退出登录</button>
+  </view>
+
+  <!-- 今日 AI 配额可视化卡片 -->
+  <view wx:if="{{quota}}" class="card">
+    <view class="section-head" style="margin-bottom: 18rpx;">
+      <text class="card-title" style="margin-bottom: 0;">今日 AI 咨询配额</text>
+      <status-badge
+        type="{{quota.is_exempt ? 'warning' : 'success'}}"
+        text="{{quota.is_exempt ? '配额豁免' : quota.date}}"
+      />
+    </view>
+
+    <view class="quota-item">
+      <view class="quota-row">
+        <text class="quota-label">今日对话次数</text>
+        <text class="quota-val">
+          {{quota.requests_used}} / {{quota.is_exempt || quota.requests_limit <= 0 ? '不限' : quota.requests_limit + ' 次'}}
+        </text>
+      </view>
+      <view class="progress-track">
+        <view class="progress-fill" style="width: {{reqPercent}}%;" />
+      </view>
+    </view>
+
+    <view class="quota-item" style="margin-bottom: 0;">
+      <view class="quota-row">
+        <text class="quota-label">今日 Token 消耗</text>
+        <text class="quota-val">
+          {{quota.tokens_used}} / {{quota.is_exempt || quota.tokens_limit <= 0 ? '不限' : quota.tokens_limit}}
+        </text>
+      </view>
+      <view class="progress-track">
+        <view class="progress-fill progress-soft" style="width: {{tokPercent}}%;" />
+      </view>
     </view>
   </view>
 
-  <view class="card">
-    <view class="card-title">运行环境</view>
-    <view class="env-row">
-      <text class="muted-text">当前环境</text>
-      <text>{{envName}}</text>
+  <!-- 我的情感资产入口 -->
+  <view class="card menu-card">
+    <view class="menu-item" bindtap="goLoveProfile">
+      <view class="menu-left">
+        <text class="menu-emoji">💞</text>
+        <view>
+          <view class="menu-title">我的情感背景记忆卡</view>
+          <view class="muted-text">
+            {{loveProfile && loveProfile.is_configured ? (loveProfile.relationship_stage_label || '已填写') + (loveProfile.auto_inject ? ' · 自动注入中' : ' · 已暂停') : '点击填写，让恋爱导师更懂你'}}
+          </view>
+        </view>
+      </view>
+      <text class="menu-arrow">›</text>
     </view>
-    <view class="env-row">
-      <text class="muted-text">接口地址</text>
-      <text class="api-url">{{apiBaseUrl}}</text>
+
+    <view class="menu-item" bindtap="goReplyHelper">
+      <view class="menu-left">
+        <text class="menu-emoji">💬</text>
+        <view>
+          <view class="menu-title">帮我回消息 · 潜台词拆解</view>
+          <view class="muted-text">粘贴对方微信原话，生成 3 条高情商回复</view>
+        </view>
+      </view>
+      <text class="menu-arrow">›</text>
+    </view>
+
+    <view class="menu-item" bindtap="goHistoryChat">
+      <view class="menu-left">
+        <text class="menu-emoji">📜</text>
+        <view>
+          <view class="menu-title">历史咨询与置顶会话</view>
+          <view class="muted-text">当前已保存 {{conversationCount}} 条对话记录</view>
+        </view>
+      </view>
+      <text class="menu-arrow">›</text>
     </view>
   </view>
+
+  <!-- 后端连通与环境切换 -->
+  <view class="card">
+    <view class="section-head" style="margin-bottom: 16rpx;">
+      <text class="card-title" style="margin-bottom: 0;">云端服务状态</text>
+      <status-badge type="{{healthType}}" text="{{healthText}}" />
+    </view>
+    <view class="env-line">
+      <text class="muted-text">当前连接</text>
+      <text class="env-val">{{envLabel}} · {{healthModel}}</text>
+    </view>
+    <view class="env-line">
+      <text class="muted-text">接口地址</text>
+      <text class="env-url">{{apiBaseUrl}}</text>
+    </view>
+    <view class="env-btns">
+      <button class="ghost-btn env-btn" bindtap="checkHealth">检测连通</button>
+      <button class="ghost-btn env-btn" bindtap="handleSwitchEnv">
+        切至{{envKey === 'cloud' ? '本机开发服' : '云端测试服'}}
+      </button>
+    </view>
+  </view>
+
+  <button wx:if="{{userInfo}}" class="logout-btn" bindtap="handleLogout">退出当前登录</button>
 </view>

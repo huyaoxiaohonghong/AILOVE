@@ -1,15 +1,54 @@
 <view class="chat-page">
-  <view class="chat-toolbar">
-    <text class="toolbar-info">LangChain 多轮会话</text>
-    <text class="toolbar-clear" bindtap="handleClearSession">清空会话</text>
+  <!-- 顶栏：历史会话 / 新对话 / 情感档案状态 -->
+  <view class="chat-header">
+    <view class="header-left">
+      <view class="header-pill" bindtap="onOpenHistory">
+        <text>📜 历史</text>
+        <text wx:if="{{conversations.length > 0}}" class="pill-count">{{conversations.length}}</text>
+      </view>
+      <view class="header-pill" bindtap="onNewChatTap">＋ 新对话</view>
+    </view>
+    <view class="header-right">
+      <view
+        class="profile-pill {{loveProfileActive ? 'profile-pill-on' : ''}}"
+        bindtap="goLoveProfile"
+      >
+        💞 {{loveProfileActive ? (loveProfileStage || '记忆已开') : '情感档案'}}
+      </view>
+    </view>
   </view>
 
+  <!-- 5 大恋爱情感智能体横向切换条 -->
+  <scroll-view class="persona-scroll" scroll-x="true" enable-flex="true">
+    <view class="persona-row">
+      <view
+        class="p-chip {{!selectedPersonaId ? 'p-chip-active' : ''}}"
+        data-id=""
+        bindtap="onSelectPersona"
+      >
+        ✨ 默认直连
+      </view>
+      <view
+        wx:for="{{personas}}"
+        wx:key="id"
+        class="p-chip {{selectedPersonaId === item.id ? 'p-chip-active' : ''}}"
+        data-id="{{item.id}}"
+        bindtap="onSelectPersona"
+      >
+        {{item.avatar_emoji || '💘'}} {{item.name}}
+      </view>
+    </view>
+  </scroll-view>
+
+  <!-- 对话消息滚动区 -->
   <scroll-view
     class="chat-scroll"
     scroll-y="true"
     scroll-into-view="{{scrollToId}}"
     scroll-with-animation="true"
   >
+    <view wx:if="{{loadingHistory}}" class="history-loading">正在还原历史会话...</view>
+
     <view class="msg-list">
       <view
         wx:for="{{messages}}"
@@ -17,31 +56,149 @@
         id="msg-{{item.id}}"
         class="msg-row {{item.role === 'user' ? 'msg-user' : 'msg-ai'}}"
       >
-        <view class="msg-bubble">
-          <text user-select="true">{{item.content}}</text>
+        <view class="msg-bubble {{item.isError ? 'msg-error' : ''}}">
+          <!-- 角色与情感档案徽章 -->
+          <view wx:if="{{item.role === 'assistant'}}" class="bubble-head">
+            <text class="bubble-role">{{item.modelLabel || 'AILOVE 恋爱助手'}}</text>
+            <text wx:if="{{item.loveProfileInjected}}" class="profile-tag">💞 已结合档案</text>
+          </view>
+
+          <!-- 可折叠深度思考过程 -->
+          <view wx:if="{{item.reasoning}}" class="reasoning-box">
+            <view class="reasoning-toggle" data-idx="{{index}}" bindtap="onToggleReasoning">
+              <text>🧠 深度思考过程</text>
+              <text>{{item.reasoningOpen ? '收起 ▲' : '展开 ▼'}}</text>
+            </view>
+            <view wx:if="{{item.reasoningOpen}}" class="reasoning-content">
+              <text user-select="true">{{item.reasoning}}</text>
+            </view>
+          </view>
+
+          <!-- 主回复正文 -->
+          <view class="bubble-text">
+            <text user-select="true">{{item.content || (item.reasoning ? '正在整理回复...' : '正在倾听与思考中...')}}</text>
+          </view>
+
+          <!-- 情绪关怀护栏暖心卡片 -->
+          <view
+            wx:if="{{item.role === 'assistant' && item.emotionCare}}"
+            class="care-card {{item.emotionCare.level === 'crisis' ? 'care-crisis' : 'care-distress'}}"
+          >
+            <view class="care-title">
+              {{item.emotionCare.level === 'crisis' ? '🤍' : '🌙'}} {{item.emotionCare.title}}
+            </view>
+            <view class="care-msg">{{item.emotionCare.message}}</view>
+            <view wx:if="{{item.emotionCare.hotlines && item.emotionCare.hotlines.length}}" class="care-hotlines">
+              <view
+                wx:for="{{item.emotionCare.hotlines}}"
+                wx:for-item="h"
+                wx:key="name"
+                class="hotline-chip"
+                data-phone="{{h.phone}}"
+                bindtap="onTapHotline"
+              >
+                <text>{{h.name}}</text>
+                <text class="hotline-num">{{h.phone}}</text>
+              </view>
+            </view>
+          </view>
+
+          <!-- 底部复制操作 -->
+          <view wx:if="{{item.role === 'assistant' && item.content}}" class="bubble-foot">
+            <text class="copy-btn" data-content="{{item.content}}" bindtap="onCopyMessage">
+              复制回复
+            </text>
+          </view>
         </view>
-      </view>
-      <view wx:if="{{sending}}" id="msg-loading" class="msg-row msg-ai">
-        <view class="msg-bubble loading-bubble">AI 正在思考中...</view>
       </view>
     </view>
   </scroll-view>
 
-  <view class="chat-composer">
+  <!-- 输入框上方：帮我回消息 + 当前导师快捷提问 -->
+  <scroll-view class="starter-scroll" scroll-x="true" enable-flex="true">
+    <view class="starter-row">
+      <view class="reply-helper-pill" bindtap="goReplyHelper">💬 帮我回消息</view>
+      <view
+        wx:for="{{activePersona ? activePersona.starter_prompts : []}}"
+        wx:key="*this"
+        class="starter-pill"
+        data-prompt="{{item}}"
+        bindtap="onTapStarter"
+      >
+        {{item}}
+      </view>
+    </view>
+  </scroll-view>
+
+  <!-- 底部输入栏（适配全面屏安全区） -->
+  <view class="chat-composer safe-bottom">
     <input
       class="composer-input"
-      placeholder="输入消息，与 AILOVE 智能助手对话"
+      placeholder="{{activePersona ? ('向「' + activePersona.name + '」倾诉...') : '说说你的心事或粘贴 TA 的话...'}}"
       value="{{inputValue}}"
       confirm-type="send"
       bindinput="onInputChange"
       bindconfirm="handleSend"
     />
+    <button wx:if="{{sending}}" class="composer-stop" bindtap="handleStop">停止</button>
     <button
+      wx:else
       class="composer-send"
-      disabled="{{sending || !inputValue}}"
+      disabled="{{!inputValue}}"
       bindtap="handleSend"
     >
       发送
     </button>
+  </view>
+
+  <!-- 历史会话底部抽屉 -->
+  <view wx:if="{{historyVisible}}" class="sheet-mask" bindtap="onCloseHistory">
+    <view class="sheet-panel safe-bottom" catchtap="">
+      <view class="sheet-head">
+        <text class="sheet-title">历史咨询记录 ({{conversations.length}})</text>
+        <text class="sheet-close" bindtap="onCloseHistory">关闭</text>
+      </view>
+      <scroll-view class="sheet-scroll" scroll-y="true">
+        <view wx:if="{{conversations.length === 0}}" class="sheet-empty">
+          暂无历史会话，发起第一轮咨询后将自动保存
+        </view>
+        <view
+          wx:for="{{conversations}}"
+          wx:key="session_id"
+          class="hist-item {{sessionId === item.session_id ? 'hist-active' : ''}} {{item.is_pinned ? 'hist-pinned' : ''}}"
+          data-sid="{{item.session_id}}"
+          bindtap="onSelectHistoryItem"
+        >
+          <view class="hist-main">
+            <view class="hist-title-row">
+              <text wx:if="{{item.is_pinned}}" class="hist-pin">📌</text>
+              <text class="hist-title">{{item.title}}</text>
+            </view>
+            <view class="hist-meta">
+              <text wx:if="{{item.persona_name}}" class="hist-persona">{{item.persona_name}}</text>
+              <text class="hist-model">{{item.model_name || 'AI'}}</text>
+            </view>
+          </view>
+          <view class="hist-ops" catchtap="">
+            <text
+              class="hist-op-btn"
+              data-sid="{{item.session_id}}"
+              data-pinned="{{item.is_pinned}}"
+              bindtap="onTogglePinConv"
+            >
+              {{item.is_pinned ? '取消置顶' : '置顶'}}
+            </text>
+            <text
+              class="hist-op-del"
+              data-sid="{{item.session_id}}"
+              data-title="{{item.title}}"
+              bindtap="onDeleteConv"
+            >
+              删
+            </text>
+          </view>
+        </view>
+      </scroll-view>
+    </view>
   </view>
 </view>

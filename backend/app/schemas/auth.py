@@ -106,3 +106,8 @@ class WxLoginResponse(BaseModel):
     expires_in: int
     user: MiniappUserProfile
     is_mock_wx: bool = False
+
+
+class MiniappProfileUpdateRequest(BaseModel):
+    nickname: str | None = Field(default=None, min_length=1, max_length=64, description="微信昵称")
+    avatar_url: str | None = Field(default=None, max_length=512, description="头像地址")

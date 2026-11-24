@@ -30,6 +30,7 @@ _ACTION_RULES: tuple[tuple[str, str, bool, str, str], ...] = (
     ("PATCH", "/api/v1/admin/accounts/", True, "account", "变更账号状态或角色"),
     ("POST", "/api/v1/admin/accounts/", True, "account", "账号重置密码/踢下线"),
     ("PATCH", "/api/v1/admin/users/", True, "miniapp_user", "变更小程序用户状态"),
+    ("PATCH", "/api/v1/miniapp/user/profile", False, "miniapp_user", "小程序用户更新个人资料"),
     ("POST", "/api/v1/admin/ai/configs", False, "ai", "新增 AI 模型配置"),
     ("PUT", "/api/v1/admin/ai/configs/", True, "ai", "更新 AI 模型配置"),
     ("DELETE", "/api/v1/admin/ai/configs/", True, "ai", "删除 AI 模型配置"),

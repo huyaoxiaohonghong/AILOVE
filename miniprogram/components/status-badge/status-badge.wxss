@@ -42,10 +42,10 @@
 }
 
 .badge-info {
-  background: #eef2ff;
-  color: #4f46e5;
+  background: #fff2f5;
+  color: #c83553;
 }
 
 .badge-info .dot {
-  background: #6366f1;
+  background: #d84361;
 }

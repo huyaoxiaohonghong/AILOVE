@@ -22,10 +22,11 @@ function request(options) {
     data = {},
     header = {},
     needAuth = true,
-    timeout = 30000,
+    timeout = 60000,
   } = options
 
   const token = getToken()
+  const baseUrl = env.getEnvConfig().API_BASE_URL
   const mergedHeader = Object.assign(
     { 'Content-Type': 'application/json' },
     header,
@@ -34,7 +35,7 @@ function request(options) {
 
   return new Promise((resolve, reject) => {
     wx.request({
-      url: `${env.API_BASE_URL}${url}`,
+      url: `${baseUrl}${url}`,
       method,
       data,
       timeout,
@@ -62,7 +63,7 @@ function request(options) {
         reject(new Error(body.message || `请求失败 (${statusCode})`))
       },
       fail(err) {
-        reject(new Error(err.errMsg || '网络连接失败，请确认后端服务已启动'))
+        reject(new Error(err.errMsg || '网络连接失败，请检查网络或切换服务端地址'))
       },
     })
   })
@@ -70,6 +71,8 @@ function request(options) {
 
 module.exports = {
   request,
+  getToken,
+  clearAuthStorage,
   TOKEN_KEY,
   USER_KEY,
 }

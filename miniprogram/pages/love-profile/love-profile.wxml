@@ -1,0 +1,126 @@
+<view class="container safe-bottom">
+  <!-- 自动注入开关卡片 -->
+  <view class="switch-card">
+    <view class="switch-left">
+      <view class="switch-title">💞 自动注入 AI 对话上下文</view>
+      <view class="switch-desc">
+        开启后，5 位恋爱导师将自动结合你的真实处境作答，仅存于你个人账号下严格隐私隔离
+      </view>
+    </view>
+    <switch checked="{{autoInject}}" color="#c83553" bindchange="onToggleAutoInject" />
+  </view>
+
+  <view class="card">
+    <view class="field-label">当前所处的情感阶段</view>
+    <view class="chip-list">
+      <view
+        wx:for="{{stages}}"
+        wx:key="code"
+        class="chip {{relationshipStage === item.code ? 'chip-active' : ''}}"
+        data-code="{{item.code}}"
+        bindtap="onSelectStage"
+      >
+        <text>{{item.emoji}}</text>
+        <text>{{item.label}}</text>
+      </view>
+    </view>
+
+    <view class="field-label" style="margin-top: 28rpx;">对方称呼（可选）</view>
+    <input
+      class="text-input"
+      placeholder="例如：TA、小林、学姐、男朋友"
+      value="{{partnerNickname}}"
+      maxlength="32"
+      data-field="partnerNickname"
+      bindinput="onFieldInput"
+    />
+
+    <view class="field-label" style="margin-top: 28rpx;">对方性格 / 依恋特点（最多 8 个）</view>
+    <view class="chip-list">
+      <view
+        wx:for="{{partnerTraitPresets}}"
+        wx:key="*this"
+        class="chip {{partnerTraitMap[item] ? 'chip-active' : ''}}"
+        data-tag="{{item}}"
+        bindtap="onTogglePartnerTrait"
+      >
+        {{item}}
+      </view>
+    </view>
+    <view wx:if="{{partnerTraits.length > 0}}" class="chosen-row">
+      <text class="chosen-label">已选：</text>
+      <view
+        wx:for="{{partnerTraits}}"
+        wx:key="*this"
+        class="chosen-pill"
+        data-tag="{{item}}"
+        bindtap="onTogglePartnerTrait"
+      >
+        {{item}} ×
+      </view>
+    </view>
+    <view class="custom-row">
+      <input
+        class="custom-input"
+        placeholder="补充自定义标签（如：工作狂、处女座）"
+        value="{{customTraitInput}}"
+        maxlength="24"
+        confirm-type="done"
+        bindinput="onCustomTraitInput"
+        bindconfirm="onAddCustomTrait"
+      />
+      <button class="add-tag-btn" bindtap="onAddCustomTrait">添加</button>
+    </view>
+
+    <view class="field-label" style="margin-top: 28rpx;">我自己的沟通特点</view>
+    <view class="chip-list">
+      <view
+        wx:for="{{myTraitPresets}}"
+        wx:key="*this"
+        class="chip {{myTraitMap[item] ? 'chip-active' : ''}}"
+        data-tag="{{item}}"
+        bindtap="onToggleMyTrait"
+      >
+        {{item}}
+      </view>
+    </view>
+
+    <view class="field-label" style="margin-top: 28rpx;">当前最核心的情感目标</view>
+    <input
+      class="text-input"
+      placeholder="例如：自然推进确认关系 / 化解冷战僵局 / 维持新鲜感"
+      value="{{relationshipGoal}}"
+      maxlength="160"
+      data-field="relationshipGoal"
+      bindinput="onFieldInput"
+    />
+
+    <view class="field-label" style="margin-top: 26rpx;">沟通雷区与注意事项</view>
+    <input
+      class="text-input"
+      placeholder="例如：对方反感连环追问与翻旧账；异地时差 2 小时"
+      value="{{communicationTaboos}}"
+      maxlength="300"
+      data-field="communicationTaboos"
+      bindinput="onFieldInput"
+    />
+
+    <view class="field-label" style="margin-top: 26rpx;">补充背景摘要</view>
+    <textarea
+      class="notes-textarea"
+      placeholder="简述你们认识多久、目前卡在哪件事上（最多 1200 字）"
+      value="{{backgroundNotes}}"
+      maxlength="1200"
+      auto-height="true"
+      data-field="backgroundNotes"
+      bindinput="onFieldInput"
+    />
+  </view>
+
+  <view class="footer-actions">
+    <button class="ghost-btn clear-btn" bindtap="handleClear">清空档案</button>
+    <button class="primary-btn save-btn" loading="{{saving}}" disabled="{{saving}}" bindtap="handleSave">
+      保存并生效
+    </button>
+  </view>
+</view>

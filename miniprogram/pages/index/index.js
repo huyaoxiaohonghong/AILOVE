@@ -1,61 +1,158 @@
-const env = require('../../config/env')
 const api = require('../../services/api')
+const auth = require('../../utils/auth')
+
+const CATEGORIES = [
+  { key: 'all', label: '全部导师' },
+  { key: 'chat_coach', label: '聊天话术' },
+  { key: 'dating', label: '心动约会' },
+  { key: 'relationship', label: '亲密关系' },
+  { key: 'conflict', label: '矛盾修复' },
+  { key: 'healing', label: '情绪疗愈' },
+]
 
 Page({
   data: {
-    apiBaseUrl: env.API_BASE_URL,
-    backendBadgeType: 'info',
-    backendStatusText: '检测中',
-    mysqlStatus: '-',
-    redisStatus: '-',
-    llmModel: '-',
+    loading: true,
+    errorMsg: '',
+    userInfo: null,
+    announcement: '',
+    loveProfile: null,
+    quotaText: '',
+    categories: CATEGORIES,
+    activeCategory: 'all',
+    allPersonas: [],
+    filteredPersonas: [],
+    recentConversations: [],
   },
 
   onLoad() {
-    this.checkBackendHealth()
+    this.bootstrapHome()
+  },
+
+  onShow() {
+    const cached = auth.getCachedUser()
+    if (cached) {
+      this.setData({ userInfo: cached })
+    }
+    if (!this.data.loading) {
+      this.refreshDynamicCards()
+    }
   },
 
   onPullDownRefresh() {
-    this.checkBackendHealth().finally(() => {
+    this.bootstrapHome().finally(() => {
       wx.stopPullDownRefresh()
     })
   },
 
-  async checkBackendHealth() {
-    this.setData({
-      backendBadgeType: 'info',
-      backendStatusText: '检测中',
-    })
+  async bootstrapHome() {
+    this.setData({ loading: true, errorMsg: '' })
     try {
-      const data = await api.getHealth()
-      const isOk = data.status === 'ok'
-      this.setData({
-        backendBadgeType: isOk ? 'success' : 'warning',
-        backendStatusText: isOk ? '运行正常' : '降级运行',
-        mysqlStatus: data.services.mysql.status,
-        redisStatus: data.services.redis.status,
-        llmModel: data.services.langchain.model,
-      })
+      const user = await auth.ensureLogin()
+      this.setData({ userInfo: user })
+      await this.refreshDynamicCards()
     } catch (err) {
       this.setData({
-        backendBadgeType: 'danger',
-        backendStatusText: '未连接',
-        mysqlStatus: '离线',
-        redisStatus: '离线',
-        llmModel: '-',
+        errorMsg: (err && err.message) || '暂未连接到 AILOVE 云端服务，请下拉重试',
       })
-      wx.showToast({
-        title: err.message || '后端未连接',
-        icon: 'none',
+    } finally {
+      this.setData({ loading: false })
+    }
+  },
+
+  async refreshDynamicCards() {
+    try {
+      const [pubCfg, personasRes, loveRes, convRes, quotaRes] = await Promise.all([
+        api.getPublicConfig().catch(() => null),
+        api.getPersonas().catch(() => ({ items: [] })),
+        api.getLoveProfile().catch(() => null),
+        api.getConversations().catch(() => ({ items: [] })),
+        api.getMyQuota().catch(() => null),
+      ])
+
+      const allPersonas = (personasRes && personasRes.items) || []
+      const recent = ((convRes && convRes.items) || []).slice(0, 3)
+      let quotaText = ''
+      if (quotaRes) {
+        if (quotaRes.is_exempt) {
+          quotaText = `今日已咨询 ${quotaRes.requests_used} 次`
+        } else if (quotaRes.requests_limit > 0) {
+          quotaText = `今日剩余 ${quotaRes.requests_remaining}/${quotaRes.requests_limit} 次`
+        }
+      }
+
+      this.setData({
+        errorMsg: '',
+        announcement: (pubCfg && pubCfg.announcement) || '',
+        allPersonas,
+        loveProfile: loveRes && loveRes.profile ? loveRes.profile : null,
+        recentConversations: recent,
+        quotaText,
+      })
+      this.applyCategoryFilter(this.data.activeCategory)
+    } catch (err) {
+      this.setData({
+        errorMsg: (err && err.message) || '加载数据失败，请下拉刷新',
       })
     }
   },
 
-  goChat() {
+  applyCategoryFilter(catKey) {
+    const all = this.data.allPersonas || []
+    const list = catKey === 'all' ? all : all.filter((p) => p.category === catKey)
+    this.setData({
+      activeCategory: catKey,
+      filteredPersonas: list,
+    })
+  },
+
+  onSelectCategory(e) {
+    const key = e.currentTarget.dataset.key || 'all'
+    this.applyCategoryFilter(key)
+  },
+
+  goReplyHelper() {
+    wx.navigateTo({ url: '/pages/reply-helper/reply-helper' })
+  },
+
+  goLoveProfile() {
+    wx.navigateTo({ url: '/pages/love-profile/love-profile' })
+  },
+
+  goFreeChat() {
+    const app = getApp()
+    app.setChatIntent({ newChat: true })
     wx.switchTab({ url: '/pages/chat/chat' })
   },
 
-  goProfile() {
-    wx.switchTab({ url: '/pages/profile/profile' })
+  onTapPersona(e) {
+    const pid = Number(e.currentTarget.dataset.id)
+    if (!pid) return
+    const app = getApp()
+    app.setChatIntent({ personaId: pid, newChat: true })
+    wx.switchTab({ url: '/pages/chat/chat' })
+  },
+
+  onTapStarter(e) {
+    const pid = Number(e.currentTarget.dataset.id)
+    const promptText = e.currentTarget.dataset.prompt || ''
+    if (!promptText) return
+    const app = getApp()
+    app.setChatIntent({ personaId: pid || undefined, promptText, newChat: true })
+    wx.switchTab({ url: '/pages/chat/chat' })
+  },
+
+  onTapConversation(e) {
+    const sid = e.currentTarget.dataset.sid
+    if (!sid) return
+    const app = getApp()
+    app.setChatIntent({ sessionId: sid })
+    wx.switchTab({ url: '/pages/chat/chat' })
+  },
+
+  onOpenHistoryTab() {
+    const app = getApp()
+    app.setChatIntent({ openHistory: true })
+    wx.switchTab({ url: '/pages/chat/chat' })
   },
 })

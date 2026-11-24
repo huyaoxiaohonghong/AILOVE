@@ -1,6 +1,7 @@
 {
-  "navigationBarTitleText": "AILOVE 首页",
+  "navigationBarTitleText": "AILOVE · 情感广场",
   "enablePullDownRefresh": true,
+  "backgroundColorTop": "#d84361",
   "usingComponents": {
     "status-badge": "/components/status-badge/status-badge"
   }
