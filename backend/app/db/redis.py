@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
+import uuid
 from typing import Any
 
 from redis.asyncio import Redis
@@ -11,6 +14,14 @@ from app.core.config import get_settings
 logger = logging.getLogger(__name__)
 
 _redis_client: Redis | None = None
+
+_RELEASE_LOCK_LUA = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+else
+    return 0
+end
+"""
 
 
 def init_redis() -> Redis:
@@ -94,3 +105,55 @@ async def cache_get_del_json(key: str) -> Any | None:
     except Exception as exc:
         logger.debug("Redis getdel failed for key=%s: %s", key, exc)
         return None
+
+
+async def acquire_distributed_lock(key: str, ttl_seconds: int = 30) -> tuple[bool, str]:
+    """尝试获取 Redis 分布式互斥锁（NX + EX），防止多 Worker 并发初始化冲突。
+
+    返回 (should_proceed, lock_token)：
+    - 成功抢占锁：(True, token)，结束后调用 release_distributed_lock(key, token)
+    - 锁已被其他 worker 持有：(False, "")
+    - Redis 不可用/异常：(True, "")，降级放行（由业务初始化幂等性兜底）
+    """
+    token = uuid.uuid4().hex
+    try:
+        client = get_redis()
+        acquired = await client.set(key, token, nx=True, ex=max(1, int(ttl_seconds)))
+        if acquired:
+            return True, token
+        return False, ""
+    except Exception as exc:
+        logger.debug("Redis distributed lock fallback for key=%s: %s", key, exc)
+        return True, ""
+
+
+async def release_distributed_lock(key: str, token: str) -> bool:
+    """按 token 原子校验并释放分布式锁，防止误删其他 worker 持有的锁。"""
+    if not token:
+        return False
+    try:
+        client = get_redis()
+        released = await client.eval(_RELEASE_LOCK_LUA, 1, key, token)
+        return bool(released)
+    except Exception as exc:
+        logger.debug("Redis distributed lock release skipped for key=%s: %s", key, exc)
+        return False
+
+
+async def wait_for_lock_release(
+    key: str,
+    timeout_seconds: float = 5.0,
+    poll_interval: float = 0.2,
+) -> bool:
+    """短暂等待持有初始化锁的其他 worker 完成，避免尚未建表就对外提供服务。"""
+    deadline = time.monotonic() + max(0.1, timeout_seconds)
+    try:
+        client = get_redis()
+        while time.monotonic() < deadline:
+            if not await client.exists(key):
+                return True
+            await asyncio.sleep(poll_interval)
+        return False
+    except Exception as exc:
+        logger.debug("Redis wait_for_lock_release skipped for key=%s: %s", key, exc)
+        return False

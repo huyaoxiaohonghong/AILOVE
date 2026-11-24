@@ -6,6 +6,7 @@ import time
 import uuid
 from typing import Any
 
+from app.core.network import extract_client_ip_from_asgi
 from app.core.security import decode_access_token
 from app.services.audit_log_service import record_audit_log, serialize_summary
 
@@ -73,15 +74,13 @@ def _infer_module_and_action(method: str, path: str) -> tuple[str, str]:
     return "system", f"{method} {path}"
 
 
-def _extract_operator(headers: list[tuple[bytes, bytes]]) -> tuple[int | None, str, str, str, str]:
-    ip = ""
+def _extract_operator(scope: dict[str, Any]) -> tuple[int | None, str, str, str, str]:
+    ip = extract_client_ip_from_asgi(scope, default="")
     ua = ""
     auth_header = ""
-    for k, v in headers:
+    for k, v in scope.get("headers", ()):
         kl = k.lower()
-        if kl == b"x-forwarded-for":
-            ip = v.decode("latin1").split(",")[0].strip()
-        elif kl == b"user-agent":
+        if kl == b"user-agent":
             ua = v.decode("utf-8", errors="ignore")
         elif kl == b"authorization":
             auth_header = v.decode("latin1")
@@ -180,9 +179,7 @@ class AuditMiddleware:
             )
             if should_audit:
                 duration_ms = int((time.perf_counter() - t0) * 1000)
-                user_id, username, role, ip, ua = _extract_operator(scope.get("headers", []))
-                if not ip and scope.get("client"):
-                    ip = str(scope["client"][0])
+                user_id, username, role, ip, ua = _extract_operator(scope)
                 module, action = _infer_module_and_action(method, path)
                 if status_code == 403:
                     result = "denied"

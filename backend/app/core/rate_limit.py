@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import Request, status
 
 from app.core.exceptions import BusinessException
+from app.core.network import extract_client_ip
 from app.core.security import decode_access_token
 from app.db.redis import get_redis
 
@@ -65,13 +66,6 @@ class RateLimiter:
 rate_limiter = RateLimiter()
 
 
-def _extract_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
-
-
 def rate_limit(
     scope: str,
     limit: int,
@@ -96,7 +90,7 @@ def rate_limit(
                 except Exception:
                     pass
         if not ident:
-            ident = f"ip:{_extract_ip(request)}"
+            ident = f"ip:{extract_client_ip(request)}"
 
         allowed, _, retry_after = await rate_limiter.check(
             f"{scope}:{ident}", limit=limit, window_seconds=window_seconds

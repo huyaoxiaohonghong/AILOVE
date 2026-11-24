@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 
 from app.api.deps import get_current_admin
+from app.core.network import extract_client_ip
 from app.schemas.auth import AdminLoginRequest
 from app.schemas.common import ok
 from app.services.auth_service import get_fresh_user_profile, login_account
@@ -15,8 +16,7 @@ router = APIRouter(prefix="/auth", tags=["管理端-认证"])
 
 @router.post("/login", summary="管理员登录（需滑动验证）")
 async def admin_login(req: AdminLoginRequest, request: Request):
-    forwarded = request.headers.get("x-forwarded-for")
-    ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "")
+    ip = extract_client_ip(request, default="")
     ua = request.headers.get("user-agent", "")
     result = await login_account(
         account=req.username,

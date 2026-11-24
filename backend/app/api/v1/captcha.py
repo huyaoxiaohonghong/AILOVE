@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 
+from app.core.network import extract_client_ip
 from app.core.rate_limit import rate_limit
 from app.schemas.captcha import SliderCreateRequest, SliderVerifyRequest
 from app.schemas.common import ok
@@ -11,10 +12,7 @@ router = APIRouter(prefix="/captcha", tags=["风控-防机器人滑动验证"])
 
 
 def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else ""
+    return extract_client_ip(request, default="")
 
 
 @router.post(

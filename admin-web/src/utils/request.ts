@@ -1,5 +1,5 @@
 import axios, { type AxiosRequestConfig } from 'axios'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from '@/plugins/element-plus'
 import router from '@/router'
 
 export interface ApiEnvelope<T = unknown> {

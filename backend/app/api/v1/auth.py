@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Request, status
 from app.api.deps import get_current_web_user
 from app.core.config import get_settings
 from app.core.exceptions import BusinessException
+from app.core.network import extract_client_ip
 from app.core.rate_limit import rate_limit
 from app.schemas.auth import (
     AccountLoginRequest,
@@ -35,8 +36,7 @@ router = APIRouter(prefix="/auth", tags=["用户认证-多点会话与安全中�
 
 
 def _extract_client_meta(request: Request) -> tuple[str, str]:
-    forwarded = request.headers.get("x-forwarded-for")
-    ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "")
+    ip = extract_client_ip(request, default="")
     ua = request.headers.get("user-agent", "")
     return ip, ua
 

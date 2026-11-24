@@ -34,9 +34,30 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vue-vendor': ['vue', 'vue-router', 'pinia'],
-          'element-plus': ['element-plus', '@element-plus/icons-vue'],
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (
+            id.includes('/node_modules/vue/') ||
+            id.includes('/node_modules/@vue/') ||
+            id.includes('/node_modules/vue-router/') ||
+            id.includes('/node_modules/pinia/')
+          ) {
+            return 'vue-vendor'
+          }
+          if (id.includes('/node_modules/@element-plus/icons-vue/')) {
+            return 'ep-icons'
+          }
+          if (
+            id.includes('/node_modules/element-plus/') ||
+            id.includes('/node_modules/@floating-ui/') ||
+            id.includes('/node_modules/@popperjs/') ||
+            id.includes('/node_modules/lodash-es/') ||
+            id.includes('/node_modules/async-validator/') ||
+            id.includes('/node_modules/@ctrl/tinycolor/')
+          ) {
+            return 'element-plus'
+          }
+          return undefined
         },
       },
     },

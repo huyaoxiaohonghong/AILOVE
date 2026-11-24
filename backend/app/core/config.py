@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     MAX_SESSIONS_PER_USER: int = 5  # 单账号最多同时在线设备数
     LOGIN_MAX_FAIL_ATTEMPTS: int = 5  # 连续登录失败锁定阈值
     LOGIN_LOCK_MINUTES: int = 15  # 触发防爆破锁定时长（分钟）
+    TRUST_X_FORWARDED_FOR: bool = False  # 仅外层存在可信 CDN/LB 时开启，默认关闭以防伪造 XFF 绕过限流
 
     # 初始化管理员配置
     DEFAULT_ADMIN_USERNAME: str = "admin"
