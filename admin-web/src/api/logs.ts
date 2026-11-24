@@ -1,3 +1,4 @@
+import { downloadAuthenticatedCsv } from '@/utils/download'
 import { request } from '@/utils/request'
 
 export interface LogSummary {
@@ -110,4 +111,17 @@ export function cleanupOldLogs(data: {
     method: 'post',
     data,
   })
+}
+
+export function exportAuditLogsCsv(params: {
+  keyword?: string
+  module?: string
+  result?: string
+  method?: string
+}) {
+  return downloadAuthenticatedCsv('/admin/logs/audit/export', params, 'ailove_audit_logs.csv')
+}
+
+export function exportLoginLogsCsv(params: { keyword?: string; status?: string }) {
+  return downloadAuthenticatedCsv('/admin/logs/login/export', params, 'ailove_login_logs.csv')
 }

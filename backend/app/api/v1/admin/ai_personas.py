@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import require_permissions
+from app.core.csv_utils import build_csv_response
 from app.schemas.ai import AIPersonaCreate, AIPersonaUpdate
 from app.schemas.common import ok
 from app.services.ai_persona_service import (
@@ -13,7 +15,7 @@ from app.services.ai_persona_service import (
     list_personas,
     update_persona,
 )
-from app.services.ai_usage_service import get_ai_analytics
+from app.services.ai_usage_service import export_usage_logs_rows, get_ai_analytics
 
 router = APIRouter(prefix="/ai", tags=["管理端-智能体与分析"])
 
@@ -63,3 +65,25 @@ async def admin_ai_analytics(
 ):
     data = await get_ai_analytics(days=days)
     return ok(data)
+
+
+@router.get("/analytics/export", summary="导出近 N 天 AI 调用明细与 Token 用量 CSV")
+async def export_admin_ai_analytics_csv(
+    days: int = Query(default=7, ge=1, le=30, description="导出天数(1~30)"),
+    status_filter: str | None = Query(default=None, alias="status", description="success / failed"),
+    model_name: str | None = Query(default=None, description="按模型名称过滤"),
+    limit: int = Query(default=2000, ge=1, le=5000),
+    _current_admin: dict[str, Any] = Depends(require_permissions("dashboard:view")),
+):
+    headers, rows = await export_usage_logs_rows(
+        days=days,
+        status_filter=status_filter,
+        model_name=model_name,
+        limit=limit,
+    )
+    stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M")
+    return build_csv_response(
+        filename=f"ailove_ai_usage_{days}d_{stamp}.csv",
+        headers=headers,
+        rows=rows,
+    )

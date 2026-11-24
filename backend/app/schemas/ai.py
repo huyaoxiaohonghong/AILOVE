@@ -39,6 +39,8 @@ class ChatResponse(BaseModel):
     token_usage: int = 0
     love_profile_injected: bool = False
     emotion_care: dict[str, Any] | None = None
+    fallback_used: bool = False
+    fallback_from: str = ""
 
 
 class ChatMessageItem(BaseModel):

@@ -19,7 +19,12 @@ from app.db.mysql import get_session_factory
 from app.db.redis import cache_delete, cache_get_json, cache_set_json
 from app.models.ai_model_config import AIModelConfig
 from app.schemas.ai import AIModelConfigCreate, AIModelConfigItem, AIModelConfigUpdate
-from app.services.ai_providers import get_provider_adapter, humanize_llm_error, resolve_protocol
+from app.services.ai_providers import (
+    ACTIVE_PROVIDER_ADAPTERS,
+    get_provider_adapter,
+    humanize_llm_error,
+    resolve_protocol,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -273,8 +278,9 @@ async def list_ai_configs(*, only_enabled: bool = False) -> list[AIModelConfigIt
 async def create_ai_config(req: AIModelConfigCreate, admin_id: int) -> AIModelConfigItem:
     adapter = get_provider_adapter(req.provider)
     if adapter is None:
+        supported = " / ".join(ACTIVE_PROVIDER_ADAPTERS.keys())
         raise BusinessException(
-            f"暂不支持提供商「{req.provider}」，当前仅开放 DeepSeek（后续版本陆续开放其他模型）",
+            f"暂不支持提供商「{req.provider}」，当前已开放：{supported}",
             code=40040,
         )
 
@@ -614,6 +620,41 @@ async def resolve_runtime_config(config_id: int | None = None) -> RuntimeAIConfi
         system_prompt=settings.LLM_SYSTEM_PROMPT,
         extra_params={},
     )
+
+
+async def resolve_fallback_configs(exclude_id: int | None = None) -> list[RuntimeAIConfig]:
+    """获取已启用且已配置 API Key 的备用模型列表（优先选用最近探针测试通过的配置）。"""
+    candidates: list[RuntimeAIConfig] = []
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            stmt = select(AIModelConfig).where(AIModelConfig.is_enabled.is_(True))
+            if exclude_id is not None:
+                stmt = stmt.where(AIModelConfig.id != exclude_id)
+            rows = (await session.execute(stmt)).scalars().all()
+            for row in rows:
+                runtime = _row_to_runtime(row)
+                if runtime.is_configured and get_provider_adapter(runtime.provider) is not None:
+                    candidates.append(runtime)
+    except (SQLAlchemyError, OSError):
+        _ensure_mem_seed()
+        for rec in _mem_configs.values():
+            if not rec["is_enabled"]:
+                continue
+            if exclude_id is not None and rec["id"] == exclude_id:
+                continue
+            runtime = _mem_to_runtime(rec)
+            if runtime.is_configured and get_provider_adapter(runtime.provider) is not None:
+                candidates.append(runtime)
+
+    candidates.sort(
+        key=lambda c: (
+            c.last_test_status != "ok",
+            not c.is_default,
+            c.id or 0,
+        )
+    )
+    return candidates
 
 
 async def _record_test_outcome(

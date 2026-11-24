@@ -49,6 +49,7 @@ _ACTION_RULES: tuple[tuple[str, str, bool, str, str], ...] = (
     ("PUT", "/api/v1/admin/system/configs", False, "system", "更新系统动态配置"),
     ("POST", "/api/v1/admin/system/configs/reset", False, "system", "重置系统默认配置"),
     ("POST", "/api/v1/admin/system/smtp/test", False, "system", "测试 SMTP 邮件连通性"),
+    ("POST", "/api/v1/admin/system/alert/test", False, "system", "测试异常告警 Webhook"),
     ("POST", "/api/v1/admin/rbac/roles", False, "rbac", "创建自定义角色"),
     ("PUT", "/api/v1/admin/rbac/roles/", True, "rbac", "修改角色与权限配置"),
     ("DELETE", "/api/v1/admin/rbac/roles/", True, "rbac", "删除自定义角色"),

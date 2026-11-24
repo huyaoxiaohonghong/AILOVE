@@ -1,4 +1,5 @@
 import router from '@/router'
+import { downloadAuthenticatedCsv } from '@/utils/download'
 import { getStoredToken, removeStoredToken, request } from '@/utils/request'
 
 export type AIProtocol = 'openai' | 'anthropic'
@@ -113,6 +114,8 @@ export interface AiChatResult {
   token_usage: number
   love_profile_injected?: boolean
   emotion_care?: EmotionCareNotice | null
+  fallback_used?: boolean
+  fallback_from?: string
 }
 
 export type RelationshipStage =
@@ -544,6 +547,10 @@ export function fetchAiAnalytics(days = 7) {
   })
 }
 
+export function exportAiUsageCsv(days = 7) {
+  return downloadAuthenticatedCsv('/admin/ai/analytics/export', { days }, `ailove_ai_usage_${days}d.csv`)
+}
+
 export interface StreamAiMeta {
   session_id: string
   model?: string
@@ -560,6 +567,7 @@ export interface StreamAiMeta {
 
 export interface StreamAiCallbacks {
   onMeta?: (meta: StreamAiMeta) => void
+  onFallback?: (backupLabel: string) => void
   onReasoning?: (chunk: string) => void
   onDelta: (chunk: string) => void
   onUsage?: (totalTokens: number) => void
@@ -646,6 +654,8 @@ async function consumeAiSse(
         emotion_care: payload.emotion_care,
         prompt_preview: payload.prompt_preview,
       })
+    } else if (payload.event === 'fallback' && payload.content) {
+      callbacks.onFallback?.(payload.content)
     } else if (payload.event === 'reasoning' && payload.content) {
       callbacks.onReasoning?.(payload.content)
     } else if (payload.event === 'delta' && payload.content) {

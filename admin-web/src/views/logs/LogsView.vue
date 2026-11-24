@@ -3,6 +3,8 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from '@/plugins/element-plus'
 import {
   cleanupOldLogs,
+  exportAuditLogsCsv,
+  exportLoginLogsCsv,
   fetchAllLoginLogs,
   fetchAuditLogs,
   fetchLogSummary,
@@ -52,6 +54,7 @@ const loginQuery = reactive({
 const detailVisible = ref(false)
 const detailItem = ref<AuditLogItem | null>(null)
 const cleaning = ref(false)
+const exporting = ref(false)
 
 const moduleOptions = [
   { label: '账号与分配 (account)', value: 'account' },
@@ -154,6 +157,29 @@ async function handleCleanup() {
   }
 }
 
+async function handleExportCsv() {
+  exporting.value = true
+  try {
+    const filename =
+      activeTab.value === 'audit'
+        ? await exportAuditLogsCsv({
+            keyword: auditQuery.keyword,
+            module: auditQuery.module,
+            result: auditQuery.result,
+            method: auditQuery.method,
+          })
+        : await exportLoginLogsCsv({
+            keyword: loginQuery.keyword,
+            status: loginQuery.status,
+          })
+    ElMessage.success(`已导出 ${filename}`)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '导出失败')
+  } finally {
+    exporting.value = false
+  }
+}
+
 onMounted(() => {
   void refreshAll()
 })
@@ -169,6 +195,9 @@ onMounted(() => {
         </p>
       </div>
       <div class="header-actions">
+        <el-button plain icon="Document" :loading="exporting" @click="handleExportCsv">
+          {{ activeTab === 'audit' ? '导出操作日志 CSV' : '导出登录日志 CSV' }}
+        </el-button>
         <el-button icon="Refresh" @click="refreshAll">刷新数据</el-button>
         <el-button
           v-if="canManage"

@@ -20,7 +20,7 @@ from app.services.ai_providers import list_all_providers
 router = APIRouter(prefix="/ai", tags=["管理端-AI模型与提供商配置"])
 
 
-@router.get("/providers", summary="获取支持的 AI 模型提供商注册表（当前开放 DeepSeek）")
+@router.get("/providers", summary="获取支持的 AI 模型提供商注册表（DeepSeek / 通义千问 / 豆包 / Moonshot）")
 async def get_ai_providers(
     _current_admin: dict[str, Any] = Depends(require_permissions("ai:config:view")),
 ):

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import require_permissions
+from app.core.csv_utils import build_csv_response
 from app.schemas.common import ok
 from app.schemas.system import AuditLogCleanupRequest
 from app.services import audit_log_service
@@ -65,6 +67,60 @@ async def list_all_login_logs(
         end_time=end_time,
     )
     return ok(data)
+
+
+@router.get("/audit/export", summary="按当前筛选条件导出系统操作审计日志 CSV")
+async def export_audit_logs_csv(
+    keyword: str | None = Query(default=None),
+    module: str | None = Query(default=None),
+    result: str | None = Query(default=None),
+    method: str | None = Query(default=None),
+    status_code: int | None = Query(default=None),
+    start_time: str | None = Query(default=None),
+    end_time: str | None = Query(default=None),
+    limit: int = Query(default=2000, ge=1, le=5000),
+    _current_admin: dict[str, Any] = Depends(require_permissions("log:audit:view")),
+):
+    headers, rows = await audit_log_service.export_audit_logs_rows(
+        keyword=keyword,
+        module=module,
+        result=result,
+        method=method,
+        status_code=status_code,
+        start_time=start_time,
+        end_time=end_time,
+        limit=limit,
+    )
+    stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M")
+    return build_csv_response(
+        filename=f"ailove_audit_logs_{stamp}.csv",
+        headers=headers,
+        rows=rows,
+    )
+
+
+@router.get("/login/export", summary="按当前筛选条件导出全站登录安全日志 CSV")
+async def export_login_logs_csv(
+    keyword: str | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+    start_time: str | None = Query(default=None),
+    end_time: str | None = Query(default=None),
+    limit: int = Query(default=2000, ge=1, le=5000),
+    _current_admin: dict[str, Any] = Depends(require_permissions("log:audit:view")),
+):
+    headers, rows = await audit_log_service.export_login_logs_rows(
+        keyword=keyword,
+        status_filter=status_filter,
+        start_time=start_time,
+        end_time=end_time,
+        limit=limit,
+    )
+    stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M")
+    return build_csv_response(
+        filename=f"ailove_login_logs_{stamp}.csv",
+        headers=headers,
+        rows=rows,
+    )
 
 
 @router.post("/cleanup", summary="按保留天数清理历史审计日志与登录日志")

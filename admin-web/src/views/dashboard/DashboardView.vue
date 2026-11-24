@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { fetchAiAnalytics, type AIAnalyticsData } from '@/api/ai'
+import { ElMessage } from '@/plugins/element-plus'
+import { exportAiUsageCsv, fetchAiAnalytics, type AIAnalyticsData } from '@/api/ai'
 import { fetchDashboardOverview, type DashboardOverview } from '@/api/system'
 
 const loading = ref(false)
+const exportingCsv = ref(false)
 const overview = ref<DashboardOverview | null>(null)
 const analytics = ref<AIAnalyticsData | null>(null)
 const analyticsDays = ref(7)
@@ -29,6 +31,18 @@ async function switchDays(days: number) {
   analyticsDays.value = days
   hoveredIndex.value = null
   analytics.value = await fetchAiAnalytics(days).catch(() => analytics.value)
+}
+
+async function handleExportAiCsv() {
+  exportingCsv.value = true
+  try {
+    const filename = await exportAiUsageCsv(analyticsDays.value)
+    ElMessage.success(`已导出 ${filename}`)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '导出失败')
+  } finally {
+    exportingCsv.value = false
+  }
 }
 
 const SVG_W = 640
@@ -218,6 +232,15 @@ onMounted(() => {
                   14 天
                 </button>
               </div>
+              <el-button
+                size="small"
+                plain
+                icon="Document"
+                :loading="exportingCsv"
+                @click="handleExportAiCsv"
+              >
+                导出 CSV
+              </el-button>
             </div>
           </div>
 

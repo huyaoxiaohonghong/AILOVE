@@ -22,14 +22,20 @@ from app.schemas.ai import ChatRequest, ChatResponse, ReplyHelperRequest
 from app.services import (
     ai_persona_service,
     ai_usage_service,
+    alert_service,
     love_profile_service,
     sys_config_service,
 )
-from app.services.ai_config_service import RuntimeAIConfig, resolve_runtime_config
+from app.services.ai_config_service import (
+    RuntimeAIConfig,
+    resolve_fallback_configs,
+    resolve_runtime_config,
+)
 from app.services.ai_providers import (
     BaseProviderAdapter,
     get_provider_adapter,
     humanize_llm_error,
+    is_fallback_eligible_error,
 )
 from app.services.emotion_guard import (
     build_reply_helper_prompt,
@@ -688,6 +694,9 @@ class LLMService:
         history = await self.get_history(session_id, owner)
 
         is_mock = not cfg.is_configured
+        active_cfg = cfg
+        fallback_used = False
+        fallback_from = ""
         reasoning = ""
         prompt_tokens = 0
         completion_tokens = 0
@@ -706,9 +715,17 @@ class LLMService:
                 inject_clock=inject_clock,
                 extra_system_blocks=extra_blocks,
             )
+            ai_msg: Any = None
             try:
                 ai_msg = await llm.ainvoke(messages)
-            except Exception as exc:
+            except Exception as primary_exc:
+                primary_latency = max(1, int((time.perf_counter() - t0) * 1000))
+                primary_friendly = humanize_llm_error(
+                    primary_exc,
+                    model_name=cfg.model_name,
+                    base_url=cfg.base_url,
+                    latency_ms=primary_latency,
+                )
                 await ai_usage_service.record_usage(
                     owner_scope=owner,
                     user_type=user_type,
@@ -719,24 +736,71 @@ class LLMService:
                     persona_name=persona_name,
                     provider=cfg.provider,
                     model_name=cfg.model_name,
-                    latency_ms=max(1, int((time.perf_counter() - t0) * 1000)),
+                    latency_ms=primary_latency,
                     is_stream=False,
                     is_mock=False,
                     call_status="failed",
                 )
-                raise self._wrap_llm_error(exc, cfg, t0) from exc
+
+                auto_fb = await sys_config_service.get_bool("ai.auto_fallback_enabled", default=True)
+                if auto_fb and is_fallback_eligible_error(primary_exc):
+                    backups = await resolve_fallback_configs(exclude_id=cfg.id)
+                    for fb_cfg in backups:
+                        try:
+                            fb_adapter, fb_llm = self._build_llm(
+                                fb_cfg, temperature, streaming=False
+                            )
+                            ai_msg = await fb_llm.ainvoke(messages)
+                            adapter = fb_adapter
+                            active_cfg = fb_cfg
+                            fallback_used = True
+                            fallback_from = f"{cfg.name} ({cfg.model_name})"
+                            logger.warning(
+                                "AI auto-fallback succeeded: %s/%s -> %s/%s",
+                                cfg.provider,
+                                cfg.model_name,
+                                fb_cfg.provider,
+                                fb_cfg.model_name,
+                            )
+                            await alert_service.notify_llm_alert(
+                                provider=cfg.provider,
+                                model_name=cfg.model_name,
+                                config_name=cfg.name,
+                                error_summary=primary_friendly,
+                                fallback_to=f"{fb_cfg.name} ({fb_cfg.model_name})",
+                            )
+                            break
+                        except Exception as fb_exc:
+                            logger.warning(
+                                "Fallback candidate %s/%s failed: %s",
+                                fb_cfg.provider,
+                                fb_cfg.model_name,
+                                fb_exc,
+                            )
+
+                if ai_msg is None:
+                    await alert_service.notify_llm_alert(
+                        provider=cfg.provider,
+                        model_name=cfg.model_name,
+                        config_name=cfg.name,
+                        error_summary=primary_friendly,
+                    )
+                    raise self._wrap_llm_error(primary_exc, cfg, t0) from primary_exc
+
             reasoning, reply = adapter.extract_chunk_deltas(ai_msg)
             prompt_tokens, completion_tokens, token_usage = self._extract_token_breakdown(ai_msg)
 
         latency_ms = max(1, int((time.perf_counter() - t0) * 1000))
         history.append({"role": "user", "content": req.message})
         history.append({"role": "assistant", "content": reply})
-        await self.save_history(session_id, history, owner, max_messages=cfg.max_history_messages)
+        await self.save_history(
+            session_id, history, owner, max_messages=active_cfg.max_history_messages
+        )
         await self._persist_turn(
             session_id=session_id,
             user_type=user_type,
             user_id=user_id,
-            model_name=cfg.model_name,
+            model_name=active_cfg.model_name,
             user_content=req.message,
             assistant_content=reply,
             token_usage=token_usage,
@@ -753,8 +817,8 @@ class LLMService:
             session_id=session_id,
             persona_id=persona_id,
             persona_name=persona_name,
-            provider=cfg.provider,
-            model_name=cfg.model_name,
+            provider=active_cfg.provider,
+            model_name=active_cfg.model_name,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=token_usage,
@@ -768,11 +832,11 @@ class LLMService:
             session_id=session_id,
             reply=reply,
             reasoning=reasoning,
-            model=cfg.model_name,
-            provider=cfg.provider,
-            protocol=cfg.protocol,
-            config_id=cfg.id,
-            config_name=cfg.name,
+            model=active_cfg.model_name,
+            provider=active_cfg.provider,
+            protocol=active_cfg.protocol,
+            config_id=active_cfg.id,
+            config_name=active_cfg.name,
             persona_id=persona_id,
             persona_name=persona_name,
             is_mock=is_mock,
@@ -780,6 +844,8 @@ class LLMService:
             token_usage=token_usage,
             love_profile_injected=love_profile_injected,
             emotion_care=emotion_care,
+            fallback_used=fallback_used,
+            fallback_from=fallback_from,
         )
 
     async def stream_chat(
@@ -817,6 +883,7 @@ class LLMService:
             prompt_tokens = 0
             completion_tokens = 0
             token_usage = 0
+            active_cfg = cfg
             t0 = time.perf_counter()
             if not cfg.is_configured:
                 mock_text = self._build_mock_reply(cfg, req.message)
@@ -836,19 +903,29 @@ class LLMService:
                     inject_clock=inject_clock,
                     extra_system_blocks=extra_blocks,
                 )
+                emitted_any = False
                 try:
                     async for chunk in llm.astream(messages):
                         reasoning_piece, content_piece = adapter.extract_chunk_deltas(chunk)
                         if reasoning_piece:
+                            emitted_any = True
                             yield "reasoning", reasoning_piece
                         if content_piece:
+                            emitted_any = True
                             collected.append(content_piece)
                             yield "delta", content_piece
                         p_tok, c_tok, t_tok = self._extract_token_breakdown(chunk)
                         prompt_tokens += p_tok
                         completion_tokens += c_tok
                         token_usage += t_tok
-                except Exception as exc:
+                except Exception as primary_exc:
+                    primary_latency = max(1, int((time.perf_counter() - t0) * 1000))
+                    primary_friendly = humanize_llm_error(
+                        primary_exc,
+                        model_name=cfg.model_name,
+                        base_url=cfg.base_url,
+                        latency_ms=primary_latency,
+                    )
                     await ai_usage_service.record_usage(
                         owner_scope=owner,
                         user_type=user_type,
@@ -859,12 +936,70 @@ class LLMService:
                         persona_name=persona_name,
                         provider=cfg.provider,
                         model_name=cfg.model_name,
-                        latency_ms=max(1, int((time.perf_counter() - t0) * 1000)),
+                        latency_ms=primary_latency,
                         is_stream=True,
                         is_mock=False,
                         call_status="failed",
                     )
-                    raise self._wrap_llm_error(exc, cfg, t0) from exc
+
+                    recovered = False
+                    auto_fb = await sys_config_service.get_bool(
+                        "ai.auto_fallback_enabled", default=True
+                    )
+                    if not emitted_any and auto_fb and is_fallback_eligible_error(primary_exc):
+                        backups = await resolve_fallback_configs(exclude_id=cfg.id)
+                        for fb_cfg in backups:
+                            fb_emitted = False
+                            try:
+                                fb_adapter, fb_llm = self._build_llm(
+                                    fb_cfg, temperature, streaming=True
+                                )
+                                async for chunk in fb_llm.astream(messages):
+                                    if not fb_emitted:
+                                        fb_emitted = True
+                                        active_cfg = fb_cfg
+                                        yield (
+                                            "fallback",
+                                            f"{fb_cfg.name} ({fb_cfg.model_name})",
+                                        )
+                                        await alert_service.notify_llm_alert(
+                                            provider=cfg.provider,
+                                            model_name=cfg.model_name,
+                                            config_name=cfg.name,
+                                            error_summary=primary_friendly,
+                                            fallback_to=f"{fb_cfg.name} ({fb_cfg.model_name})",
+                                        )
+                                    r_piece, c_piece = fb_adapter.extract_chunk_deltas(chunk)
+                                    if r_piece:
+                                        yield "reasoning", r_piece
+                                    if c_piece:
+                                        collected.append(c_piece)
+                                        yield "delta", c_piece
+                                    p_tok, c_tok, t_tok = self._extract_token_breakdown(chunk)
+                                    prompt_tokens += p_tok
+                                    completion_tokens += c_tok
+                                    token_usage += t_tok
+                                if fb_emitted or collected:
+                                    recovered = True
+                                    break
+                            except Exception as fb_exc:
+                                logger.warning(
+                                    "Stream fallback candidate %s/%s failed: %s",
+                                    fb_cfg.provider,
+                                    fb_cfg.model_name,
+                                    fb_exc,
+                                )
+                                if fb_emitted:
+                                    raise self._wrap_llm_error(fb_exc, fb_cfg, t0) from fb_exc
+
+                    if not recovered:
+                        await alert_service.notify_llm_alert(
+                            provider=cfg.provider,
+                            model_name=cfg.model_name,
+                            config_name=cfg.name,
+                            error_summary=primary_friendly,
+                        )
+                        raise self._wrap_llm_error(primary_exc, cfg, t0) from primary_exc
                 if token_usage:
                     yield "usage", str(token_usage)
 
@@ -873,13 +1008,13 @@ class LLMService:
             history.append({"role": "user", "content": req.message})
             history.append({"role": "assistant", "content": full_reply})
             await self.save_history(
-                session_id, history, owner, max_messages=cfg.max_history_messages
+                session_id, history, owner, max_messages=active_cfg.max_history_messages
             )
             await self._persist_turn(
                 session_id=session_id,
                 user_type=user_type,
                 user_id=user_id,
-                model_name=cfg.model_name,
+                model_name=active_cfg.model_name,
                 user_content=req.message,
                 assistant_content=full_reply,
                 token_usage=token_usage,
@@ -896,14 +1031,14 @@ class LLMService:
                 session_id=session_id,
                 persona_id=persona_id,
                 persona_name=persona_name,
-                provider=cfg.provider,
-                model_name=cfg.model_name,
+                provider=active_cfg.provider,
+                model_name=active_cfg.model_name,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=token_usage,
                 latency_ms=latency_ms,
                 is_stream=True,
-                is_mock=not cfg.is_configured,
+                is_mock=not active_cfg.is_configured,
                 call_status="success",
             )
 

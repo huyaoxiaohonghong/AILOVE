@@ -135,3 +135,17 @@ export function sendSmtpTestEmail(to_email: string) {
     data: { to_email },
   })
 }
+
+export function sendAlertWebhookTest(message = '') {
+  return request<{
+    delivered: boolean
+    provider: string
+    status_code: number
+    latency_ms: number
+    message: string
+  }>({
+    url: '/admin/system/alert/test',
+    method: 'post',
+    data: { message },
+  })
+}

@@ -26,6 +26,10 @@ _SENSITIVE_KEYS = frozenset(
         "token",
         "access_token",
         "captcha_token",
+        "webhook_url",
+        "webhook_secret",
+        "alert.webhook_url",
+        "alert.webhook_secret",
     }
 )
 
@@ -460,3 +464,102 @@ def serialize_summary(body_bytes: bytes) -> str:
         return json.dumps(sanitize_payload(parsed), ensure_ascii=False)
     except Exception:
         return ""
+
+
+async def export_audit_logs_rows(
+    *,
+    keyword: str | None = None,
+    module: str | None = None,
+    result: str | None = None,
+    method: str | None = None,
+    status_code: int | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    limit: int = 2000,
+) -> tuple[list[str], list[list[Any]]]:
+    """按筛选条件导出操作审计日志 CSV 数据（上限 5000 条）。"""
+    cap = max(1, min(int(limit), 5000))
+    data = await query_audit_logs(
+        page=1,
+        page_size=cap,
+        keyword=keyword,
+        module=module,
+        result=result,
+        method=method,
+        status_code=status_code,
+        start_time=start_time,
+        end_time=end_time,
+    )
+    headers = [
+        "ID",
+        "时间",
+        "Request ID",
+        "操作人",
+        "角色",
+        "模块",
+        "动作",
+        "方法",
+        "路径",
+        "状态码",
+        "结果",
+        "客户端IP",
+        "设备终端",
+        "耗时(ms)",
+        "错误信息",
+    ]
+    rows = [
+        [
+            item.get("id", ""),
+            item.get("created_at", ""),
+            item.get("request_id", ""),
+            item.get("username", ""),
+            item.get("role", ""),
+            item.get("module", ""),
+            item.get("action", ""),
+            item.get("method", ""),
+            item.get("path", ""),
+            item.get("status_code", ""),
+            item.get("result", ""),
+            item.get("ip", ""),
+            item.get("device_label", ""),
+            item.get("duration_ms", 0),
+            item.get("error_message", ""),
+        ]
+        for item in data["items"]
+    ]
+    return headers, rows
+
+
+async def export_login_logs_rows(
+    *,
+    keyword: str | None = None,
+    status_filter: str | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    limit: int = 2000,
+) -> tuple[list[str], list[list[Any]]]:
+    """按筛选条件导出登录安全审计日志 CSV 数据（上限 5000 条）。"""
+    cap = max(1, min(int(limit), 5000))
+    data = await query_all_login_logs(
+        page=1,
+        page_size=cap,
+        keyword=keyword,
+        status_filter=status_filter,
+        start_time=start_time,
+        end_time=end_time,
+    )
+    headers = ["ID", "时间", "登录账号", "用户ID", "结果", "失败原因", "客户端IP", "设备终端"]
+    rows = [
+        [
+            item.get("id", ""),
+            item.get("created_at", ""),
+            item.get("account", ""),
+            item.get("user_id") or "",
+            item.get("status", ""),
+            item.get("fail_reason", ""),
+            item.get("ip", ""),
+            item.get("device_label", ""),
+        ]
+        for item in data["items"]
+    ]
+    return headers, rows

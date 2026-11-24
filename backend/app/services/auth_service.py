@@ -544,7 +544,7 @@ async def login_account(
             canonical_lookup = f"{local.replace('.', '')}@gmail.com"
 
     async def _handle_wrong_password(target_uid: int | None) -> None:
-        _, just_locked, remain = await login_rate_limiter.record_failure(acct_lower)
+        fail_count, just_locked, remain = await login_rate_limiter.record_failure(acct_lower)
         reason = "触发防爆破锁定" if just_locked else "账号或密码错误"
         await record_login_log(
             user_id=target_uid,
@@ -555,8 +555,16 @@ async def login_account(
             fail_reason=reason,
         )
         if just_locked:
+            from app.services import alert_service  # noqa: PLC0415
+
             lock_mins = await sys_config_service.get_int(
                 "security.login_lock_minutes", default=settings.LOGIN_LOCK_MINUTES
+            )
+            await alert_service.notify_login_lockout(
+                account=acct,
+                client_ip=client_ip,
+                fail_count=fail_count,
+                lock_minutes=lock_mins,
             )
             raise BusinessException(
                 f"密码连续错误达到上限，账号已锁定 {lock_mins} 分钟",

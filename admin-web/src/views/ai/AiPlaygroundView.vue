@@ -527,6 +527,9 @@ async function sendPromptText(text: string, appendUserBubble = true) {
               assistantMsg.modelLabel = `${pPrefix}${meta.config_name || 'AI'} (${meta.model})${meta.is_mock ? ' · 演示' : ''}`
             }
           },
+          onFallback: (backupLabel) => {
+            assistantMsg.modelLabel = `${backupLabel} · 自动容灾接管`
+          },
           onReasoning: (chunk) => {
             assistantMsg.reasoning = (assistantMsg.reasoning || '') + chunk
             void scrollToBottom()

@@ -65,6 +65,13 @@ const defaultConfig = computed(
 const currentProviderObj = computed(
   () => activeProviders.value.find((p) => p.code === form.provider) ?? activeProviders.value[0] ?? null,
 )
+const supportsAnthropicProtocol = computed(() =>
+  Boolean(currentProviderObj.value?.protocol_endpoints?.anthropic),
+)
+const configuredBackupCount = computed(() => {
+  const defId = defaultConfig.value?.id
+  return configs.value.filter((c) => c.is_enabled && c.has_api_key && c.id !== defId).length
+})
 const isLegacyReasoner = computed(() => form.model_name.trim().toLowerCase() === 'deepseek-reasoner')
 const isV4ProSelected = computed(() => form.model_name.trim().toLowerCase() === 'deepseek-v4-pro')
 
@@ -83,24 +90,31 @@ async function loadAll() {
   }
 }
 
-function openCreateDialog(presetModelId = 'deepseek-flash', presetProtocol: AIProtocol = 'openai') {
+function openCreateDialog(
+  presetModelId = 'deepseek-flash',
+  presetProtocol: AIProtocol = 'openai',
+  providerCode = 'deepseek',
+) {
   editingId.value = null
   editingHasKey.value = false
-  const deepseek = activeProviders.value.find((p) => p.code === 'deepseek')
-  const preset = deepseek?.models.find((m) => m.id === presetModelId)
-  const endpoints = deepseek?.protocol_endpoints ?? {
-    openai: 'https://api.deepseek.com',
-    anthropic: 'https://api.deepseek.com/anthropic',
+  const prov =
+    activeProviders.value.find((p) => p.code === providerCode) ?? activeProviders.value[0] ?? null
+  const resolvedCode = prov?.code || providerCode
+  const preset = prov?.models.find((m) => m.id === presetModelId) ?? prov?.models[0]
+  const resolvedModelId = preset?.id || presetModelId
+  const endpoints = prov?.protocol_endpoints ?? {
+    openai: prov?.default_base_url || 'https://api.deepseek.com',
   }
+  const effectiveProto: AIProtocol =
+    presetProtocol === 'anthropic' && endpoints.anthropic ? 'anthropic' : 'openai'
 
-  form.name =
-    presetModelId === 'deepseek-v4-pro'
-      ? `DeepSeek V4 Pro (${presetProtocol === 'anthropic' ? 'Anthropic' : 'OpenAI'})`
-      : `DeepSeek Flash (${presetProtocol === 'anthropic' ? 'Anthropic' : 'OpenAI'})`
-  form.provider = 'deepseek'
-  form.protocol = presetProtocol
-  form.model_name = presetModelId
-  form.base_url = endpoints[presetProtocol] || deepseek?.default_base_url || 'https://api.deepseek.com'
+  form.name = preset
+    ? `${prov?.name || resolvedCode} · ${preset.id}`
+    : `${prov?.name || resolvedCode} (${resolvedModelId})`
+  form.provider = resolvedCode
+  form.protocol = effectiveProto
+  form.model_name = resolvedModelId
+  form.base_url = endpoints[effectiveProto] || prov?.default_base_url || 'https://api.deepseek.com'
   form.api_key = ''
   form.clear_api_key = false
   form.temperature = 0.7
@@ -108,10 +122,25 @@ function openCreateDialog(presetModelId = 'deepseek-flash', presetProtocol: AIPr
   form.max_tokens = preset?.default_max_tokens ?? 4096
   form.timeout_seconds = 60
   form.max_history_messages = 20
-  form.system_prompt = '你是 AILOVE 智能助手，请用清晰、温暖、专业的中文回答用户问题。'
+  form.system_prompt = '你是 AILOVE 恋爱情感智能助手，请用细腻、温暖、高情商的中文回答用户问题。'
   form.is_enabled = true
   form.is_default = configs.value.length === 0
   dialogVisible.value = true
+}
+
+function handleProviderChange(nextCode: string) {
+  const prov = activeProviders.value.find((p) => p.code === nextCode)
+  if (!prov) return
+  const firstModel = prov.models[0]
+  form.protocol = 'openai'
+  form.base_url = prov.protocol_endpoints?.openai || prov.default_base_url
+  if (firstModel) {
+    form.model_name = firstModel.id
+    form.max_tokens = firstModel.default_max_tokens
+    if (!editingId.value) {
+      form.name = `${prov.name} · ${firstModel.id}`
+    }
+  }
 }
 
 function openEditDialog(row: AIModelConfigItem) {
@@ -177,7 +206,7 @@ async function handleSave() {
         is_enabled: form.is_enabled,
         is_default: form.is_default,
       })
-      ElMessage.success('DeepSeek 模型配置已创建并热生效')
+      ElMessage.success('AI 模型配置已创建并热生效')
     } else {
       await updateAiConfig(editingId.value, {
         name: form.name.trim(),
@@ -249,9 +278,9 @@ onMounted(() => {
   <div v-loading="loading">
     <div class="page-header">
       <div>
-        <h2 class="page-title">AI 模型配置中心</h2>
+        <h2 class="page-title">AI 模型配置与容灾中心</h2>
         <p class="page-subtitle">
-          统一管理大模型 API 密钥（Fernet 加密落库）、双协议端点切换与连通探测；首期内置 DeepSeek (deepseek-flash / deepseek-v4-pro)
+          统一管理多厂商 API 密钥（Fernet 加密落库）、主备自动降级切换与连通探测；已内置 DeepSeek、通义千问、豆包与 Kimi
         </p>
       </div>
       <div class="header-actions">
@@ -262,9 +291,9 @@ onMounted(() => {
           v-if="canManage"
           type="primary"
           icon="Plus"
-          @click="openCreateDialog('deepseek-flash', 'openai')"
+          @click="openCreateDialog('deepseek-flash', 'openai', 'deepseek')"
         >
-          新增 DeepSeek 配置
+          新增模型配置
         </el-button>
       </div>
     </div>
@@ -314,6 +343,13 @@ onMounted(() => {
             <span>·</span>
             <span>最近测速：<strong class="mono-num">{{ defaultConfig.last_test_latency_ms }} ms</strong></span>
           </template>
+          <span>·</span>
+          <span>
+            高可用容灾备选：
+            <strong class="mono-num">
+              {{ configuredBackupCount > 0 ? `${configuredBackupCount} 个已就绪（故障自动切换）` : '暂未配置备用模型' }}
+            </strong>
+          </span>
         </div>
       </div>
 
@@ -349,8 +385,8 @@ onMounted(() => {
           </div>
           <p class="prov-desc">{{ p.description }}</p>
           <div v-if="p.protocol_endpoints" class="endpoint-chips mono-num">
-            <span>OpenAI: {{ p.protocol_endpoints.openai }}</span>
-            <span>Anthropic: {{ p.protocol_endpoints.anthropic }}</span>
+            <span v-if="p.protocol_endpoints.openai">OpenAI: {{ p.protocol_endpoints.openai }}</span>
+            <span v-if="p.protocol_endpoints.anthropic">Anthropic: {{ p.protocol_endpoints.anthropic }}</span>
           </div>
           <div class="prov-models">
             <template v-if="canManage">
@@ -359,7 +395,7 @@ onMounted(() => {
                 :key="m.id"
                 size="small"
                 plain
-                @click="openCreateDialog(m.id, 'openai')"
+                @click="openCreateDialog(m.id, 'openai', p.code)"
               >
                 + {{ m.id }}
               </el-button>
@@ -506,17 +542,22 @@ onMounted(() => {
     <!-- 新增 / 编辑配置弹窗 -->
     <el-dialog
       v-model="dialogVisible"
-      :title="editingId === null ? '新增 DeepSeek 模型配置' : '编辑 AI 模型配置'"
+      :title="editingId === null ? '新增 AI 模型配置' : '编辑 AI 模型配置'"
       width="600px"
       destroy-on-close
     >
       <el-form ref="formRef" :model="form" :rules="rules" label-width="118px">
         <el-form-item label="配置名称" prop="name">
-          <el-input v-model="form.name" placeholder="例如：DeepSeek Flash 主力对话" maxlength="64" />
+          <el-input v-model="form.name" placeholder="例如：通义千问 Plus 情感主力 / 豆包备用" maxlength="64" />
         </el-form-item>
 
         <el-form-item label="模型提供商" prop="provider">
-          <el-select v-model="form.provider" :disabled="editingId !== null" style="width: 100%">
+          <el-select
+            v-model="form.provider"
+            :disabled="editingId !== null"
+            style="width: 100%"
+            @change="handleProviderChange"
+          >
             <el-option
               v-for="p in activeProviders"
               :key="p.code"
@@ -529,13 +570,15 @@ onMounted(() => {
         <el-form-item label="API 接口协议" prop="protocol">
           <el-radio-group v-model="form.protocol" @change="handleProtocolChange">
             <el-radio-button value="openai">OpenAI 协议</el-radio-button>
-            <el-radio-button value="anthropic">Anthropic 协议</el-radio-button>
+            <el-radio-button v-if="supportsAnthropicProtocol" value="anthropic">
+              Anthropic 协议
+            </el-radio-button>
           </el-radio-group>
           <span class="proto-hint mono-num">
             {{
-              form.protocol === 'anthropic'
-                ? 'https://api.deepseek.com/anthropic'
-                : 'https://api.deepseek.com'
+              currentProviderObj?.protocol_endpoints?.[form.protocol] ||
+              currentProviderObj?.default_base_url ||
+              'https://api.deepseek.com'
             }}
           </span>
         </el-form-item>
@@ -575,11 +618,7 @@ onMounted(() => {
         <el-form-item label="API Base URL" prop="base_url">
           <el-input
             v-model="form.base_url"
-            :placeholder="
-              form.protocol === 'anthropic'
-                ? 'https://api.deepseek.com/anthropic'
-                : 'https://api.deepseek.com'
-            "
+            :placeholder="currentProviderObj?.default_base_url || 'https://api.deepseek.com'"
           />
         </el-form-item>
 
@@ -591,12 +630,12 @@ onMounted(() => {
             :placeholder="
               editingId !== null && editingHasKey
                 ? '已加密保存，留空则保持原 Key 不变'
-                : '请输入 DeepSeek API Key (sk-...)'
+                : `请输入 ${currentProviderObj?.name || '模型'} API Key (${currentProviderObj?.api_key_placeholder || 'sk-...'})`
             "
           />
           <div class="key-helper-row">
             <a
-              href="https://platform.deepseek.com/api_keys"
+              :href="currentProviderObj?.docs_url || 'https://platform.deepseek.com/api_keys'"
               target="_blank"
               rel="noreferrer"
               class="key-apply-link"

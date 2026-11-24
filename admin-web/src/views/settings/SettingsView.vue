@@ -5,6 +5,7 @@ import {
   fetchHealth,
   fetchSystemConfigs,
   resetSystemConfigs,
+  sendAlertWebhookTest,
   sendSmtpTestEmail,
   updateSystemConfigs,
   type HealthData,
@@ -24,6 +25,8 @@ const draft = reactive<Record<string, string | number | boolean>>({})
 const health = ref<HealthData | null>(null)
 const smtpTestEmail = ref('')
 const smtpTesting = ref(false)
+const alertTestMessage = ref('')
+const alertTesting = ref(false)
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 const appTitle = import.meta.env.VITE_APP_TITLE || 'AILOVE 管理后台'
@@ -87,6 +90,16 @@ async function handleTestSmtp() {
     )
   } finally {
     smtpTesting.value = false
+  }
+}
+
+async function handleTestAlertWebhook() {
+  alertTesting.value = true
+  try {
+    const res = await sendAlertWebhookTest(alertTestMessage.value.trim())
+    ElMessage.success(res.message || `告警测试成功（${res.provider}，耗时 ${res.latency_ms}ms）`)
+  } finally {
+    alertTesting.value = false
   }
 }
 
@@ -194,6 +207,18 @@ onMounted(() => {
                     <el-option label="无加密 (仅内网调试)" value="none" />
                   </el-select>
                 </template>
+                <template v-else-if="item.config_key === 'alert.webhook_provider'">
+                  <el-select
+                    v-model="(draft[item.config_key] as string)"
+                    :disabled="!canManage"
+                    style="width: 260px"
+                  >
+                    <el-option label="企业微信群机器人 (WeCom)" value="wecom" />
+                    <el-option label="飞书自定义机器人 (Feishu)" value="feishu" />
+                    <el-option label="钉钉自定义机器人 (DingTalk)" value="dingtalk" />
+                    <el-option label="通用 JSON Webhook" value="generic" />
+                  </el-select>
+                </template>
                 <template v-else-if="item.is_secret">
                   <el-input
                     v-model="(draft[item.config_key] as string)"
@@ -204,7 +229,9 @@ onMounted(() => {
                     :placeholder="
                       item.has_secret
                         ? '已加密保存（留空则保持原密钥不变）'
-                        : '请输入 SMTP 授权码或密码'
+                        : item.config_key === 'alert.webhook_url'
+                          ? '请输入 https:// 机器人 Webhook 地址'
+                          : '请输入密钥或授权码'
                     "
                     clearable
                     style="width: 300px"
@@ -237,6 +264,24 @@ onMounted(() => {
               />
               <el-button type="primary" plain :loading="smtpTesting" @click="handleTestSmtp">
                 发送测试邮件
+              </el-button>
+            </div>
+          </div>
+
+          <div v-if="group.group === 'alert' && canManage" class="smtp-test-box">
+            <div class="smtp-test-info">
+              <strong>异常告警 Webhook 连通性测试</strong>
+              <span>请先填写并保存 Webhook 地址，再发送一条测试消息校验企微 / 飞书 / 钉钉群机器人是否正常接收。</span>
+            </div>
+            <div class="smtp-test-actions">
+              <el-input
+                v-model="alertTestMessage"
+                placeholder="可选：自定义测试消息内容"
+                clearable
+                style="width: 260px"
+              />
+              <el-button type="primary" plain :loading="alertTesting" @click="handleTestAlertWebhook">
+                发送测试告警
               </el-button>
             </div>
           </div>

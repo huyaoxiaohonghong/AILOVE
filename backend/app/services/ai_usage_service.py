@@ -553,3 +553,97 @@ async def get_ai_analytics(days: int = 7) -> dict[str, Any]:
     except (SQLAlchemyError, OSError) as exc:
         logger.debug("get_ai_analytics fallback to memory: %s", exc)
         return _aggregate_analytics_mem(safe_days, dates, start_dt, today_str)
+
+
+async def export_usage_logs_rows(
+    *,
+    days: int = 7,
+    status_filter: str | None = None,
+    model_name: str | None = None,
+    limit: int = 2000,
+) -> tuple[list[str], list[list[Any]]]:
+    """按天数与筛选条件导出 AI 调用明细与 Token 用量 CSV 数据（上限 5000 条）。"""
+    safe_days = max(1, min(int(days), 30))
+    cap = max(1, min(int(limit), 5000))
+    _, start_dt, _ = _build_date_axis(safe_days)
+
+    headers = [
+        "调用时间",
+        "用户名",
+        "作用域",
+        "来源端",
+        "智能体",
+        "模型提供商",
+        "模型名称",
+        "输入Token",
+        "输出Token",
+        "总Token",
+        "耗时(ms)",
+        "流式",
+        "演示模式",
+        "状态",
+        "会话ID",
+    ]
+    rows: list[list[Any]] = []
+    try:
+        factory = get_session_factory()
+        async with factory() as db:
+            stmt = select(AIUsageLog).where(AIUsageLog.created_at >= start_dt)
+            if status_filter:
+                stmt = stmt.where(AIUsageLog.status == status_filter)
+            if model_name:
+                stmt = stmt.where(AIUsageLog.model_name == model_name)
+            stmt = stmt.order_by(AIUsageLog.id.desc()).limit(cap)
+            records = (await db.execute(stmt)).scalars().all()
+            for r in records:
+                rows.append(
+                    [
+                        r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else "",
+                        r.username or r.owner_scope,
+                        r.owner_scope,
+                        r.user_type,
+                        r.persona_name or "自由对话",
+                        r.provider,
+                        r.model_name,
+                        r.prompt_tokens,
+                        r.completion_tokens,
+                        r.total_tokens,
+                        r.latency_ms,
+                        "是" if r.is_stream else "否",
+                        "是" if r.is_mock else "否",
+                        r.status,
+                        r.session_id,
+                    ]
+                )
+            return headers, rows
+    except (SQLAlchemyError, OSError) as exc:
+        logger.debug("export_usage_logs_rows fallback to memory: %s", exc)
+        filtered = [
+            it
+            for it in reversed(_mem_usage_logs)
+            if it["created_at"] >= start_dt
+            and (not status_filter or it["status"] == status_filter)
+            and (not model_name or it["model_name"] == model_name)
+        ]
+        for it in filtered[:cap]:
+            ts = it["created_at"]
+            rows.append(
+                [
+                    ts.strftime("%Y-%m-%d %H:%M:%S") if isinstance(ts, datetime) else str(ts),
+                    it.get("username") or it.get("owner_scope", ""),
+                    it.get("owner_scope", ""),
+                    it.get("user_type", ""),
+                    it.get("persona_name") or "自由对话",
+                    it.get("provider", ""),
+                    it.get("model_name", ""),
+                    it.get("prompt_tokens", 0),
+                    it.get("completion_tokens", 0),
+                    it.get("total_tokens", 0),
+                    it.get("latency_ms", 0),
+                    "是" if it.get("is_stream") else "否",
+                    "是" if it.get("is_mock") else "否",
+                    it.get("status", ""),
+                    it.get("session_id", ""),
+                ]
+            )
+        return headers, rows

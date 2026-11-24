@@ -54,6 +54,10 @@ class SmtpTestRequest(BaseModel):
     to_email: str = Field(..., min_length=5, max_length=254, description="测试收件邮箱地址")
 
 
+class AlertWebhookTestRequest(BaseModel):
+    message: str = Field(default="", max_length=200, description="可选的自定义测试告警文案")
+
+
 class AuditLogCleanupRequest(BaseModel):
     retention_days: int | None = Field(
         default=None,

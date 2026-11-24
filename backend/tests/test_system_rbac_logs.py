@@ -41,7 +41,7 @@ async def test_dynamic_system_config_and_hot_policies():
         cfg_resp = await client.get("/api/v1/admin/system/configs", headers=admin_headers)
         assert cfg_resp.status_code == 200
         groups = cfg_resp.json()["data"]["groups"]
-        assert len(groups) == 6
+        assert len(groups) == 7
 
         try:
             # 3. 动态关闭自助注册 + 提高密码最小长度为 10

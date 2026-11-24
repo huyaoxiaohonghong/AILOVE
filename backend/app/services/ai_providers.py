@@ -96,6 +96,29 @@ def humanize_llm_error(exc: Exception, *, model_name: str, base_url: str, latenc
     return f"调用失败：{err_text[:180]}"
 
 
+def is_fallback_eligible_error(exc: Exception) -> bool:
+    """判断该异常是否属于可自动切换备用模型的上游故障（余额不足/鉴权/限流/5xx/超时/断网）。"""
+    err_text = str(exc)
+    lowered = err_text.lower()
+    if any(code in err_text for code in ("401", "402", "429", "500", "502", "503", "504")):
+        return True
+    keywords = (
+        "insufficient balance",
+        "rate limit",
+        "authentication",
+        "invalid_api_key",
+        "timeout",
+        "timed out",
+        "connection",
+        "connecterror",
+        "service unavailable",
+        "overloaded",
+        "bad gateway",
+        "temporarily unavailable",
+    )
+    return any(kw in lowered for kw in keywords)
+
+
 class BaseProviderAdapter:
     """多模型统一适配协议：后续新增 OpenAI / 通义千问 / 智谱 / Gemini 只需新增子类并注册即可。"""
 
@@ -263,24 +286,180 @@ class DeepSeekProviderAdapter(BaseProviderAdapter):
         return ChatOpenAI(**openai_kwargs)
 
 
-# 已激活的提供商适配器注册表（后续接入新模型直接在此注册）
+class OpenAICompatibleProviderAdapter(BaseProviderAdapter):
+    """通用 OpenAI 兼容协议适配器，供通义千问、豆包、Moonshot (Kimi) 等国产情感主力模型复用。"""
+
+    def build_chat_model(
+        self,
+        *,
+        api_key: str,
+        base_url: str,
+        model_name: str,
+        temperature: float,
+        top_p: float,
+        max_tokens: int,
+        timeout_seconds: int,
+        streaming: bool = True,
+        extra_params: dict[str, Any] | None = None,
+    ) -> BaseChatModel:
+        clean_base_url = (base_url or self.descriptor.default_base_url).strip().rstrip("/")
+        passthrough = {
+            k: v
+            for k, v in (extra_params or {}).items()
+            if k not in {"protocol", "api_key", "base_url", "model"}
+        }
+        openai_kwargs: dict[str, Any] = {
+            "api_key": api_key,
+            "base_url": clean_base_url,
+            "model": model_name,
+            "temperature": temperature,
+            "top_p": top_p,
+            "max_tokens": max_tokens,
+            "timeout": timeout_seconds,
+            "streaming": streaming,
+            "stream_usage": True,
+        }
+        if passthrough:
+            openai_kwargs["model_kwargs"] = passthrough
+        return ChatOpenAI(**openai_kwargs)
+
+
+class QwenProviderAdapter(OpenAICompatibleProviderAdapter):
+    """通义千问（阿里云百炼 DashScope OpenAI 兼容协议）。"""
+
+    descriptor = ProviderDescriptor(
+        code="qwen",
+        name="通义千问 (Qwen)",
+        protocol="OpenAI 兼容协议",
+        default_protocol="openai",
+        protocol_endpoints={
+            "openai": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        },
+        status="active",
+        description="阿里云百炼主力中文大模型，中文情感共情细腻稳定，适合作为主模型或高可用容灾备选。",
+        default_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        docs_url="https://bailian.console.aliyun.com/",
+        api_key_placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        models=(
+            ModelPreset(
+                id="qwen-plus",
+                label="通义千问 Plus (qwen-plus)",
+                description="均衡主力模型，中文情绪感知细腻、话术自然，性价比极高。",
+                context_window=131072,
+                supports_reasoning=False,
+                supports_temperature=True,
+                default_max_tokens=4096,
+            ),
+            ModelPreset(
+                id="qwen-max",
+                label="通义千问 Max (qwen-max)",
+                description="旗舰级推理与关系洞察模型，适合深度亲密关系与复杂矛盾拆解。",
+                context_window=32768,
+                supports_reasoning=False,
+                supports_temperature=True,
+                default_max_tokens=4096,
+            ),
+            ModelPreset(
+                id="qwen-turbo",
+                label="通义千问 Turbo (qwen-turbo)",
+                description="极速低延迟模型，适合高频「帮我回消息」与轻量情感陪伴。",
+                context_window=131072,
+                supports_reasoning=False,
+                supports_temperature=True,
+                default_max_tokens=4096,
+            ),
+        ),
+    )
+
+
+class DoubaoProviderAdapter(OpenAICompatibleProviderAdapter):
+    """字节跳动豆包（火山方舟 Ark OpenAI 兼容协议）。"""
+
+    descriptor = ProviderDescriptor(
+        code="doubao",
+        name="豆包 (火山方舟)",
+        protocol="OpenAI 兼容协议",
+        default_protocol="openai",
+        protocol_endpoints={
+            "openai": "https://ark.cn-beijing.volces.com/api/v3",
+        },
+        status="active",
+        description="火山方舟豆包系列模型，拟人化口语表达自然温暖，极适合恋爱陪聊与微信回复拟真。",
+        default_base_url="https://ark.cn-beijing.volces.com/api/v3",
+        docs_url="https://console.volcengine.com/ark",
+        api_key_placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+        models=(
+            ModelPreset(
+                id="doubao-1-5-pro-32k-250115",
+                label="豆包 1.5 Pro 32K (doubao-1-5-pro-32k-250115)",
+                description="拟人化高情商对话旗舰，回复像真人发微信一样自然不生硬。",
+                context_window=32768,
+                supports_reasoning=False,
+                supports_temperature=True,
+                default_max_tokens=4096,
+            ),
+            ModelPreset(
+                id="doubao-1-5-lite-32k-250115",
+                label="豆包 1.5 Lite 32K (doubao-1-5-lite-32k-250115)",
+                description="高速轻量版本，响应敏捷，适合日常高并发情感互动与容灾兜底。",
+                context_window=32768,
+                supports_reasoning=False,
+                supports_temperature=True,
+                default_max_tokens=4096,
+            ),
+        ),
+    )
+
+
+class MoonshotProviderAdapter(OpenAICompatibleProviderAdapter):
+    """月之暗面 Moonshot (Kimi OpenAI 兼容协议)。"""
+
+    descriptor = ProviderDescriptor(
+        code="moonshot",
+        name="Moonshot (Kimi)",
+        protocol="OpenAI 兼容协议",
+        default_protocol="openai",
+        protocol_endpoints={
+            "openai": "https://api.moonshot.cn/v1",
+        },
+        status="active",
+        description="擅长超长上下文记忆与细腻中文叙事，适合分析长段聊天记录与长期情感复盘。",
+        default_base_url="https://api.moonshot.cn/v1",
+        docs_url="https://platform.moonshot.cn/console/api-keys",
+        api_key_placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        models=(
+            ModelPreset(
+                id="moonshot-v1-8k",
+                label="Kimi 8K (moonshot-v1-8k)",
+                description="温润细腻的中文表达，适合常规情感倾诉与沟通润色。",
+                context_window=8192,
+                supports_reasoning=False,
+                supports_temperature=True,
+                default_max_tokens=4096,
+            ),
+            ModelPreset(
+                id="moonshot-v1-32k",
+                label="Kimi 32K (moonshot-v1-32k)",
+                description="长上下文窗口，轻松吃下大段微信聊天记录并深度还原前因后果。",
+                context_window=32768,
+                supports_reasoning=False,
+                supports_temperature=True,
+                default_max_tokens=4096,
+            ),
+        ),
+    )
+
+
+# 已激活的提供商适配器注册表（支持主备故障自动降级切换）
 ACTIVE_PROVIDER_ADAPTERS: dict[str, BaseProviderAdapter] = {
     "deepseek": DeepSeekProviderAdapter(),
+    "qwen": QwenProviderAdapter(),
+    "doubao": DoubaoProviderAdapter(),
+    "moonshot": MoonshotProviderAdapter(),
 }
 
 # 架构预留的后续扩展提供商清单（仅用于前端路线图展示，无需改表即可平滑接入）
 PLANNED_PROVIDERS: tuple[ProviderDescriptor, ...] = (
-    ProviderDescriptor(
-        code="qwen",
-        name="通义千问 (DashScope)",
-        protocol="openai-compatible",
-        status="planned",
-        description="阿里云百炼兼容协议，后续零改表扩展接入。",
-        default_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        docs_url="https://bailian.console.aliyun.com/",
-        api_key_placeholder="sk-xxxxxxxxxxxxxxxx",
-        models=(),
-    ),
     ProviderDescriptor(
         code="openai",
         name="OpenAI",
