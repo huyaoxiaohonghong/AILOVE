@@ -90,12 +90,31 @@ async def _ensure_incremental_columns() -> None:
             )
         )
         existing = {str(r[0]).lower() for r in rows.fetchall()}
-        if not existing:
-            return
-        for col_name, ddl in _AI_CONVERSATIONS_EXTRA_COLUMNS:
-            if col_name not in existing:
-                await conn.execute(text(f"ALTER TABLE `ai_conversations` ADD COLUMN `{col_name}` {ddl}"))
-                logger.info("Schema upgrade: added column ai_conversations.%s", col_name)
+        if existing:
+            for col_name, ddl in _AI_CONVERSATIONS_EXTRA_COLUMNS:
+                if col_name not in existing:
+                    await conn.execute(
+                        text(f"ALTER TABLE `ai_conversations` ADD COLUMN `{col_name}` {ddl}")
+                    )
+                    logger.info("Schema upgrade: added column ai_conversations.%s", col_name)
+
+        wx_rows = await conn.execute(
+            text(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wechat_users'"
+            )
+        )
+        wx_cols = {str(r[0]).lower() for r in wx_rows.fetchall()}
+        if wx_cols and "invite_verified" not in wx_cols:
+            await conn.execute(
+                text(
+                    "ALTER TABLE `wechat_users` ADD COLUMN `invite_verified` "
+                    "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否已通过小圈子邀请码验证'"
+                )
+            )
+            # 仅在首次升级补列时将存量老用户标记为已验证，避免升级后锁死既有用户
+            await conn.execute(text("UPDATE `wechat_users` SET `invite_verified` = 1"))
+            logger.info("Schema upgrade: added column wechat_users.invite_verified")
 
 
 async def ensure_tables() -> None:

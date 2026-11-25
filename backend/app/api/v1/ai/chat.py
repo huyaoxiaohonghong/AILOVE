@@ -1,27 +1,35 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import Response, StreamingResponse
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.deps import get_current_token_payload
 from app.core.exceptions import BusinessException
 from app.core.rate_limit import rate_limit
+from app.db.mysql import get_session_factory
+from app.models.wechat_user import WechatUser
 from app.schemas.ai import (
     ChatRequest,
     ConversationUpdateRequest,
+    FavoriteReplyCreate,
     LoveProfileUpdateRequest,
     ReplyHelperRequest,
+    SoftenDraftRequest,
 )
 from app.schemas.common import ok
-from app.services.ai_config_service import list_ai_configs
+from app.services import favorite_reply_service, sys_config_service
+from app.services.ai_config_service import list_ai_configs, resolve_vision_config
 from app.services.ai_persona_service import list_personas
 from app.services.ai_providers import get_provider_adapter
 from app.services.ai_usage_service import get_user_quota_status
-from app.services.emotion_guard import get_reply_helper_presets
+from app.services.emotion_guard import get_reply_helper_presets, get_soften_draft_presets
 from app.services.llm_service import build_owner_scope, llm_service
 from app.services.love_profile_service import (
     clear_love_profile,
@@ -104,6 +112,9 @@ async def get_available_models(_user: dict[str, Any] = Depends(get_current_token
             if adapter is not None
             else c.model_name in {"deepseek-v4-pro", "deepseek-reasoner"}
         )
+        supports_vision = (
+            adapter.supports_vision_model(c.model_name) if adapter is not None else False
+        )
         items.append(
             {
                 "id": c.id,
@@ -114,6 +125,7 @@ async def get_available_models(_user: dict[str, Any] = Depends(get_current_token
                 "is_default": c.is_default,
                 "has_api_key": c.has_api_key,
                 "supports_reasoning": supports_reasoning,
+                "supports_vision": supports_vision,
                 "last_test_status": c.last_test_status,
             }
         )
@@ -172,16 +184,154 @@ async def delete_my_love_profile(current_user: dict[str, Any] = Depends(get_curr
     return ok({"profile": profile}, message="个人情感档案已清空")
 
 
-@router.get("/reply-helper/presets", summary="获取「帮我回消息」场景与语气预设")
+@router.get("/reply-helper/presets", summary="获取「帮我回消息 2.0」场景与语气预设")
 async def get_reply_helper_options(_user: dict[str, Any] = Depends(get_current_token_payload)):
-    return ok(get_reply_helper_presets())
+    presets = get_reply_helper_presets()
+    vision_cfg = await resolve_vision_config()
+    presets["has_vision_model"] = vision_cfg is not None
+    presets["vision_model_label"] = (
+        f"{vision_cfg.name} ({vision_cfg.model_name})" if vision_cfg is not None else ""
+    )
+    return ok(presets)
+
+
+@router.get("/soften-draft/presets", summary="获取「先别发！」情绪降温与话术柔化预设")
+async def get_soften_draft_options(_user: dict[str, Any] = Depends(get_current_token_payload)):
+    return ok(get_soften_draft_presets())
+
+
+@router.get("/favorites", summary="获取当前用户的高情商话术收藏夹")
+async def list_my_favorites(
+    category: str | None = Query(default=None, description="分类过滤"),
+    current_user: dict[str, Any] = Depends(get_current_token_payload),
+):
+    user_type, user_id = _resolve_identity(current_user)
+    items = await favorite_reply_service.list_favorites(user_type, user_id, category=category)
+    return ok({"items": items, "total": len(items)})
+
+
+@router.post("/favorites", summary="收藏一条高情商话术")
+async def save_my_favorite(
+    req: FavoriteReplyCreate,
+    current_user: dict[str, Any] = Depends(get_current_token_payload),
+):
+    user_type, user_id = _resolve_identity(current_user)
+    item, deduplicated = await favorite_reply_service.create_favorite(
+        user_type,
+        user_id,
+        content=req.content,
+        category=req.category,
+        scene_label=req.scene_label,
+        note=req.note,
+    )
+    msg = "已在你的话术收藏夹中" if deduplicated else "已收藏到「高情商话术库」"
+    return ok({"item": item, "deduplicated": deduplicated}, message=msg)
+
+
+@router.delete("/favorites/{favorite_id}", summary="删除一条已收藏的话术")
+async def delete_my_favorite(
+    favorite_id: int,
+    current_user: dict[str, Any] = Depends(get_current_token_payload),
+):
+    user_type, user_id = _resolve_identity(current_user)
+    deleted = await favorite_reply_service.delete_favorite(user_type, user_id, favorite_id)
+    if not deleted:
+        raise BusinessException("目标收藏话术不存在或无权删除", code=40407, status_code=404)
+    return ok({"deleted_id": favorite_id}, message="已移出话术收藏夹")
+
+
+@router.get("/my-data/export", summary="导出当前用户的私密情感手账（Markdown）")
+async def export_my_love_journal(
+    format: str = Query(default="markdown", description="markdown=下载.md文件 / json=返回正文与统计"),
+    current_user: dict[str, Any] = Depends(get_current_token_payload),
+):
+    user_type, user_id = _resolve_identity(current_user)
+    bundle = await llm_service.export_user_journal_markdown(user_type, user_id)
+    if format == "json":
+        return ok(bundle)
+    return Response(
+        content=bundle["markdown"].encode("utf-8"),
+        media_type="text/markdown; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{bundle["filename"]}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.delete("/my-data", summary="一键彻底清除当前用户的全部云端情感档案、对话与收藏")
+async def purge_my_ai_data(
+    include_love_profile: bool = Query(default=True, description="同时清空情感档案记忆卡"),
+    include_favorites: bool = Query(default=True, description="同时清空高情商话术收藏夹"),
+    current_user: dict[str, Any] = Depends(get_current_token_payload),
+):
+    user_type, user_id = _resolve_identity(current_user)
+    cleared_convs = await llm_service.purge_all_user_conversations(user_type, user_id)
+    cleared_favs = 0
+    if include_favorites:
+        cleared_favs = await favorite_reply_service.delete_all_favorites(user_type, user_id)
+    if include_love_profile:
+        await clear_love_profile(user_type, user_id)
+    return ok(
+        {
+            "cleared_conversations": cleared_convs,
+            "cleared_favorites": cleared_favs,
+            "cleared_love_profile": include_love_profile,
+        },
+        message="你的全部云端私密情感数据已彻底销毁",
+    )
+
+
+async def _ensure_miniapp_invite_access(current_user: dict[str, Any]) -> None:
+    """当系统开启小圈子邀请码准入时，拦截未通过邀请码激活的微信小程序用户调用 AI。"""
+    if str(current_user.get("type", "web")) != "miniapp":
+        return
+    if not await sys_config_service.get_bool("registration.invite_code_required", default=False):
+        return
+    openid = str(current_user.get("openid", ""))
+    if openid:
+        try:
+            factory = get_session_factory()
+            async with factory() as session:
+                user = (
+                    await session.execute(select(WechatUser).where(WechatUser.openid == openid))
+                ).scalar_one_or_none()
+                if user is not None:
+                    if user.invite_verified:
+                        return
+                    raise BusinessException(
+                        "当前为小圈子内测模式，请先前往「首页」或「我的」输入邀请码激活",
+                        code=40308,
+                        status_code=status.HTTP_403_FORBIDDEN,
+                    )
+        except BusinessException:
+            raise
+        except (SQLAlchemyError, OSError):
+            from app.api.v1.miniapp.user import _mem_miniapp_profiles  # noqa: PLC0415
+
+            mem_prof = _mem_miniapp_profiles.get(openid)
+            if mem_prof and mem_prof.get("invite_verified"):
+                return
+
+    if current_user.get("invite_verified"):
+        return
+    raise BusinessException(
+        "当前为小圈子内测模式，请先前往「首页」或「我的」输入邀请码激活",
+        code=40308,
+        status_code=status.HTTP_403_FORBIDDEN,
+    )
 
 
 def _resolve_identity(current_user: dict[str, Any]) -> tuple[str, int]:
     user_type = str(current_user.get("type", "web"))
-    raw_sub = str(current_user.get("sub", "0"))
-    user_id = int(raw_sub) if raw_sub.isdigit() else 0
-    return user_type, user_id
+    raw_sub = str(current_user.get("sub", "0")).strip()
+    if raw_sub.isdigit():
+        return user_type, int(raw_sub)
+    seed = raw_sub or str(current_user.get("openid", "")).strip()
+    if seed:
+        hashed = int(hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12], 16)
+        return user_type, 1_000_000 + (hashed % 1_000_000_000)
+    return user_type, 0
 
 
 def _resolve_user_meta(current_user: dict[str, Any]) -> tuple[str, str]:
@@ -210,6 +360,7 @@ async def ai_chat(
     req: ChatRequest,
     current_user: dict[str, Any] = Depends(get_current_token_payload),
 ):
+    await _ensure_miniapp_invite_access(current_user)
     user_type, user_id = _resolve_identity(current_user)
     username, role = _resolve_user_meta(current_user)
     result = await llm_service.chat(
@@ -237,6 +388,7 @@ def _build_sse_response(
             "persona_id": meta.get("persona_id"),
             "persona_name": meta.get("persona_name") or "",
             "is_mock": not cfg.is_configured,
+            "incognito": bool(meta.get("incognito", False)),
             "love_profile_injected": bool(meta.get("love_profile_injected", False)),
             "emotion_care": meta.get("emotion_care"),
         }
@@ -273,6 +425,7 @@ async def ai_chat_stream(
     req: ChatRequest,
     current_user: dict[str, Any] = Depends(get_current_token_payload),
 ):
+    await _ensure_miniapp_invite_access(current_user)
     user_type, user_id = _resolve_identity(current_user)
     username, role = _resolve_user_meta(current_user)
     session_id, cfg, persona_meta, event_gen = await llm_service.stream_chat(
@@ -283,16 +436,73 @@ async def ai_chat_stream(
 
 @router.post(
     "/reply-helper",
-    summary="「帮我回消息 / 聊天记录拆解」结构化同步生成",
+    summary="「帮我回消息 2.0 / 聊天截图识图拆解」结构化同步生成",
     dependencies=[Depends(rate_limit("ai_chat", limit=30, window_seconds=60, by_user=True))],
 )
 async def ai_reply_helper(
     req: ReplyHelperRequest,
     current_user: dict[str, Any] = Depends(get_current_token_payload),
 ):
+    await _ensure_miniapp_invite_access(current_user)
     user_type, user_id = _resolve_identity(current_user)
     username, role = _resolve_user_meta(current_user)
-    chat_req, extra_instruction = await llm_service.build_reply_helper_chat_request(req)
+    chat_req, extra_instruction, images = await llm_service.build_reply_helper_chat_request(req)
+    result = await llm_service.chat(
+        chat_req,
+        user_type=user_type,
+        user_id=user_id,
+        username=username,
+        role=role,
+        extra_system_instruction=extra_instruction,
+        images=images,
+    )
+    return ok(result.model_dump())
+
+
+@router.post(
+    "/reply-helper/stream",
+    summary="「帮我回消息 2.0 / 聊天截图识图拆解」SSE 流式生成",
+    dependencies=[Depends(rate_limit("ai_chat", limit=30, window_seconds=60, by_user=True))],
+)
+async def ai_reply_helper_stream(
+    req: ReplyHelperRequest,
+    current_user: dict[str, Any] = Depends(get_current_token_payload),
+):
+    await _ensure_miniapp_invite_access(current_user)
+    user_type, user_id = _resolve_identity(current_user)
+    username, role = _resolve_user_meta(current_user)
+    chat_req, extra_instruction, images = await llm_service.build_reply_helper_chat_request(req)
+    session_id, cfg, persona_meta, event_gen = await llm_service.stream_chat(
+        chat_req,
+        user_type=user_type,
+        user_id=user_id,
+        username=username,
+        role=role,
+        extra_system_instruction=extra_instruction,
+        images=images,
+    )
+    return _build_sse_response(
+        session_id,
+        cfg,
+        persona_meta,
+        event_gen,
+        user_message_preview=chat_req.message,
+    )
+
+
+@router.post(
+    "/soften-draft",
+    summary="「先别发！情绪降温与话术柔化器」结构化同步生成",
+    dependencies=[Depends(rate_limit("ai_chat", limit=30, window_seconds=60, by_user=True))],
+)
+async def ai_soften_draft(
+    req: SoftenDraftRequest,
+    current_user: dict[str, Any] = Depends(get_current_token_payload),
+):
+    await _ensure_miniapp_invite_access(current_user)
+    user_type, user_id = _resolve_identity(current_user)
+    username, role = _resolve_user_meta(current_user)
+    chat_req, extra_instruction = await llm_service.build_soften_draft_chat_request(req)
     result = await llm_service.chat(
         chat_req,
         user_type=user_type,
@@ -305,17 +515,18 @@ async def ai_reply_helper(
 
 
 @router.post(
-    "/reply-helper/stream",
-    summary="「帮我回消息 / 聊天记录拆解」SSE 流式生成",
+    "/soften-draft/stream",
+    summary="「先别发！情绪降温与话术柔化器」SSE 流式生成",
     dependencies=[Depends(rate_limit("ai_chat", limit=30, window_seconds=60, by_user=True))],
 )
-async def ai_reply_helper_stream(
-    req: ReplyHelperRequest,
+async def ai_soften_draft_stream(
+    req: SoftenDraftRequest,
     current_user: dict[str, Any] = Depends(get_current_token_payload),
 ):
+    await _ensure_miniapp_invite_access(current_user)
     user_type, user_id = _resolve_identity(current_user)
     username, role = _resolve_user_meta(current_user)
-    chat_req, extra_instruction = await llm_service.build_reply_helper_chat_request(req)
+    chat_req, extra_instruction = await llm_service.build_soften_draft_chat_request(req)
     session_id, cfg, persona_meta, event_gen = await llm_service.stream_chat(
         chat_req,
         user_type=user_type,

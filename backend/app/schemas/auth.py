@@ -25,6 +25,9 @@ class EmailRegisterRequest(BaseModel):
     email_code: str = Field(
         default="", max_length=12, description="6位邮箱一次性验证码（开启邮箱校验时必填）"
     )
+    invite_code: str = Field(
+        default="", max_length=32, description="小圈子邀请码（开启邀请码准入时必填）"
+    )
 
 
 class ResetPasswordRequest(BaseModel):
@@ -89,6 +92,7 @@ class WxLoginRequest(BaseModel):
     code: str = Field(..., min_length=1, max_length=128, description="wx.login 获取的临时登录凭证")
     nickname: str | None = Field(default=None, max_length=64, description="用户昵称（可选）")
     avatar_url: str | None = Field(default=None, max_length=512, description="用户头像（可选）")
+    invite_code: str = Field(default="", max_length=32, description="小圈子邀请码（可选）")
 
 
 class MiniappUserProfile(BaseModel):
@@ -98,6 +102,8 @@ class MiniappUserProfile(BaseModel):
     avatar_url: str
     phone: str | None = None
     status: int = 1
+    invite_verified: bool = True
+    invite_required: bool = False
 
 
 class WxLoginResponse(BaseModel):
@@ -111,3 +117,7 @@ class WxLoginResponse(BaseModel):
 class MiniappProfileUpdateRequest(BaseModel):
     nickname: str | None = Field(default=None, min_length=1, max_length=64, description="微信昵称")
     avatar_url: str | None = Field(default=None, max_length=512, description="头像地址")
+
+
+class MiniappVerifyInviteRequest(BaseModel):
+    invite_code: str = Field(..., min_length=4, max_length=32, description="小圈子邀请码")

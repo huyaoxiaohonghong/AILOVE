@@ -184,6 +184,16 @@ DEFAULT_CONFIG_SPECS: tuple[ConfigSpec, ...] = (
         is_public=True,
         sort_order=40,
     ),
+    ConfigSpec(
+        key="registration.invite_code_required",
+        group="registration",
+        label="开启小圈子邀请码准入",
+        value_type="bool",
+        default="false",
+        description="开启后新邮箱注册及新微信小程序首次使用须凭有效邀请码激活，防止陌生人消耗 API 额度",
+        is_public=True,
+        sort_order=50,
+    ),
     # --- email ---
     ConfigSpec(
         key="email.smtp_enabled",
@@ -650,6 +660,7 @@ async def get_public_configs() -> dict[str, Any]:
         "registration_enabled": bool(public_items.get("registration.enabled", True)),
         "slider_captcha_enabled": bool(public_items.get("registration.slider_captcha_enabled", True)),
         "email_verify_required": bool(public_items.get("registration.email_verify_required", False)),
+        "invite_code_required": bool(public_items.get("registration.invite_code_required", False)),
         "email_service_enabled": bool(public_items.get("email.smtp_enabled", False)),
         "password_min_length": int(public_items.get("security.password_min_length", 8)),
         "configs": public_items,

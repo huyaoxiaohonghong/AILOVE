@@ -10,7 +10,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from sqlalchemy import desc, select
+from sqlalchemy import delete, desc, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.exceptions import BusinessException
@@ -18,7 +18,7 @@ from app.db.mysql import get_session_factory
 from app.db.redis import cache_delete, cache_get_json, cache_set_json
 from app.models.ai_chat import AIConversation
 from app.models.ai_chat import AIMessage as DBAIMessage
-from app.schemas.ai import ChatRequest, ChatResponse, ReplyHelperRequest
+from app.schemas.ai import ChatRequest, ChatResponse, ReplyHelperRequest, SoftenDraftRequest
 from app.services import (
     ai_persona_service,
     ai_usage_service,
@@ -30,6 +30,7 @@ from app.services.ai_config_service import (
     RuntimeAIConfig,
     resolve_fallback_configs,
     resolve_runtime_config,
+    resolve_vision_config,
 )
 from app.services.ai_providers import (
     BaseProviderAdapter,
@@ -39,6 +40,7 @@ from app.services.ai_providers import (
 )
 from app.services.emotion_guard import (
     build_reply_helper_prompt,
+    build_soften_draft_prompt,
     evaluate_emotion_care,
     strip_emotion_care_for_client,
 )
@@ -129,6 +131,7 @@ class LLMService:
         *,
         inject_clock: bool = True,
         extra_system_blocks: list[str] | None = None,
+        images: list[str] | None = None,
     ) -> list[BaseMessage]:
         messages: list[BaseMessage] = []
         blocks: list[str] = []
@@ -151,12 +154,19 @@ class LLMService:
                 messages.append(HumanMessage(content=content))
             elif role == "assistant":
                 messages.append(AIMessage(content=content))
-        messages.append(HumanMessage(content=user_input))
+        if images:
+            content_parts: list[dict[str, Any]] = [{"type": "text", "text": user_input}]
+            for img_url in images:
+                content_parts.append({"type": "image_url", "image_url": {"url": img_url}})
+            messages.append(HumanMessage(content=content_parts))
+        else:
+            messages.append(HumanMessage(content=user_input))
         return messages
 
-    def _build_mock_reply(self, cfg: RuntimeAIConfig, user_message: str) -> str:
+    def _build_mock_reply(self, cfg: RuntimeAIConfig, user_message: str, image_count: int = 0) -> str:
+        img_note = f"（含 {image_count} 张微信聊天截图预览）" if image_count > 0 else ""
         return (
-            f"【{cfg.name} · 演示回复】已收到你的消息：「{user_message}」。\n"
+            f"【{cfg.name} · 演示回复】已收到你的消息{img_note}：「{user_message}」。\n"
             f"当前模型配置（{cfg.provider} / {cfg.model_name}）尚未填写 API Key，系统自动以演示模式响应。\n"
             "请登录管理后台 →「AI 模型配置」填入 DeepSeek API Key 并测试连通后，"
             "即可实时切换至真实大模型（无需重启服务）。"
@@ -506,6 +516,117 @@ class LLMService:
         await self.clear_history(session_id, owner)
         return deleted
 
+    async def purge_all_user_conversations(self, user_type: str, user_id: int) -> int:
+        """彻底清空指定用户的全部历史会话记录与 Redis 上下文缓存（数据主权一键销毁）。"""
+        utype = (user_type or "web")[:16]
+        uid = int(user_id or 0)
+        owner = build_owner_scope(utype, uid)
+        convs = await self.list_conversations(utype, uid, limit=500)
+        session_ids = [c["session_id"] for c in convs if c.get("session_id")]
+        removed = 0
+        try:
+            factory = get_session_factory()
+            async with factory() as session:
+                res = await session.execute(
+                    delete(AIConversation).where(
+                        AIConversation.user_type == utype,
+                        AIConversation.user_id == uid,
+                    )
+                )
+                await session.commit()
+                removed = int(res.rowcount or 0)
+        except (SQLAlchemyError, OSError):
+            pass
+
+        prefix = f"{owner}:"
+        for k in [key for key in _mem_conversations if key.startswith(prefix)]:
+            _mem_conversations.pop(k, None)
+            removed += 1
+
+        for sid in session_ids:
+            await self.clear_history(sid, owner)
+        return max(removed, len(session_ids))
+
+    async def export_user_journal_markdown(self, user_type: str, user_id: int) -> dict[str, Any]:
+        """将当前用户的情感档案、收藏话术与历史对话导出为整洁可读的私密 Markdown 手账。"""
+        from app.services import favorite_reply_service  # noqa: PLC0415
+
+        utype = (user_type or "web")[:16]
+        uid = int(user_id or 0)
+        profile = await love_profile_service.get_love_profile(utype, uid)
+        favorites = await favorite_reply_service.list_favorites(utype, uid, limit=200)
+        convs = await self.list_conversations(utype, uid, limit=200)
+
+        lines: list[str] = [
+            "# AILOVE 我的私密情感手账",
+            "",
+            f"> 导出时间：{datetime.now(_BEIJING_TZ).strftime('%Y-%m-%d %H:%M:%S')} (北京时间)",
+            "",
+            "---",
+            "",
+            "## 一、个人情感背景档案",
+            "",
+        ]
+        if profile.get("is_configured"):
+            if profile.get("relationship_stage_label"):
+                lines.append(f"- **当前阶段**：{profile['relationship_stage_label']}")
+            if profile.get("partner_nickname"):
+                lines.append(f"- **对方称呼**：{profile['partner_nickname']}")
+            if profile.get("partner_traits"):
+                lines.append(f"- **对方特点**：{'、'.join(profile['partner_traits'])}")
+            if profile.get("my_traits"):
+                lines.append(f"- **我的特点**：{'、'.join(profile['my_traits'])}")
+            if profile.get("relationship_goal"):
+                lines.append(f"- **核心诉求**：{profile['relationship_goal']}")
+            if profile.get("communication_taboos"):
+                lines.append(f"- **沟通雷区**：{profile['communication_taboos']}")
+            if profile.get("background_notes"):
+                lines.append(f"- **背景补充**：{profile['background_notes']}")
+        else:
+            lines.append("_暂未填写个人情感背景记忆卡_")
+
+        lines.extend(["", "---", "", f"## 二、高情商话术收藏夹（共 {len(favorites)} 条）", ""])
+        if favorites:
+            for idx, fav in enumerate(favorites, 1):
+                tag = fav.get("scene_label") or fav.get("category") or "收藏"
+                lines.append(f"{idx}. **[{tag}]** {fav['content']}")
+                if fav.get("note"):
+                    lines.append(f"   - 备注：{fav['note']}")
+        else:
+            lines.append("_暂无收藏话术_")
+
+        lines.extend(["", "---", "", f"## 三、情感咨询历史手账（共 {len(convs)} 个会话）", ""])
+        if convs:
+            for conv in convs:
+                detail = await self.get_conversation_messages(conv["session_id"], utype, uid)
+                if not detail:
+                    continue
+                pin_flag = "📌 " if detail.get("is_pinned") else ""
+                pname = f" · {detail['persona_name']}" if detail.get("persona_name") else ""
+                lines.append(f"### {pin_flag}{detail['title']}{pname}")
+                lines.append("")
+                for msg in detail.get("messages", []):
+                    role_label = "🗣️ **我**" if msg["role"] == "user" else "💘 **AI 导师**"
+                    lines.append(f"{role_label}：")
+                    lines.append("")
+                    lines.append(str(msg.get("content", "")))
+                    lines.append("")
+                lines.append("---")
+                lines.append("")
+        else:
+            lines.append("_暂无保存的云端历史会话（无痕模式对话不会出现在此导出中）_")
+
+        ts_name = datetime.now(_BEIJING_TZ).strftime("%Y%m%d_%H%M")
+        return {
+            "filename": f"ailove_journal_{ts_name}.md",
+            "markdown": "\n".join(lines),
+            "stats": {
+                "has_love_profile": bool(profile.get("is_configured")),
+                "favorite_count": len(favorites),
+                "conversation_count": len(convs),
+            },
+        }
+
     def _extract_token_breakdown(self, msg: Any) -> tuple[int, int, int]:
         usage = getattr(msg, "usage_metadata", None)
         if isinstance(usage, dict):
@@ -635,16 +756,36 @@ class LLMService:
 
         return love_profile_injected, strip_emotion_care_for_client(care), extra_blocks
 
+    async def _resolve_vision_runtime_config(
+        self, cfg: RuntimeAIConfig, config_id: int | None
+    ) -> RuntimeAIConfig:
+        """若请求携带聊天截图且主模型已配置 API Key，确保切换至支持多模态识图的模型。"""
+        if not cfg.is_configured:
+            return cfg
+        adapter = get_provider_adapter(cfg.provider)
+        if adapter is not None and adapter.supports_vision_model(cfg.model_name):
+            return cfg
+        vision_cfg = await resolve_vision_config(config_id=config_id)
+        if vision_cfg is None:
+            raise BusinessException(
+                "当前尚未配置支持识图的多模态模型，请管理员在「AI 模型配置」中添加通义千问 "
+                "qwen-vl-plus / 豆包 Vision 等视觉模型，或改为粘贴文字拆解",
+                code=40055,
+                status_code=400,
+            )
+        return vision_cfg
+
     async def build_reply_helper_chat_request(
         self, req: ReplyHelperRequest
-    ) -> tuple[ChatRequest, str]:
-        """将「帮我回消息」结构化请求转换为标准 ChatRequest + 拆解格式指令。"""
+    ) -> tuple[ChatRequest, str, list[str]]:
+        """将「帮我回消息 2.0（含截图识图）」结构化请求转换为标准 ChatRequest + 指令 + 图片列表。"""
         user_message, extra_instruction = build_reply_helper_prompt(
             partner_message=req.partner_message,
             scene=req.scene,
             tone=req.tone,
             context=req.context,
             my_intent=req.my_intent,
+            image_count=len(req.images),
         )
         persona_id = req.persona_id
         if persona_id is None:
@@ -661,6 +802,35 @@ class LLMService:
             persona_id=persona_id,
             timezone=req.timezone,
             use_love_profile=req.use_love_profile,
+            incognito=req.incognito,
+        )
+        return chat_req, extra_instruction, list(req.images)
+
+    async def build_soften_draft_chat_request(
+        self, req: SoftenDraftRequest
+    ) -> tuple[ChatRequest, str]:
+        """将「先别发！情绪降温与话术柔化」请求转换为标准 ChatRequest + 格式指令。"""
+        user_message, extra_instruction = build_soften_draft_prompt(
+            draft_message=req.draft_message,
+            context=req.context,
+            intensity=req.intensity,
+        )
+        persona_id = req.persona_id
+        if persona_id is None:
+            enabled_personas = await ai_persona_service.list_personas(enabled_only=True)
+            for item in enabled_personas:
+                if item.get("code") == "love_conflict_mediator":
+                    persona_id = int(item["id"])
+                    break
+
+        chat_req = ChatRequest(
+            message=user_message,
+            session_id=req.session_id,
+            config_id=req.config_id,
+            persona_id=persona_id,
+            timezone=req.timezone,
+            use_love_profile=req.use_love_profile,
+            incognito=req.incognito,
         )
         return chat_req, extra_instruction
 
@@ -673,11 +843,14 @@ class LLMService:
         username: str = "",
         role: str = "user",
         extra_system_instruction: str = "",
+        images: list[str] | None = None,
     ) -> ChatResponse:
         inject_clock, effective_tz = await self._resolve_ai_runtime_policies(
             req.message, req.timezone
         )
         cfg = await resolve_runtime_config(config_id=req.config_id)
+        if images:
+            cfg = await self._resolve_vision_runtime_config(cfg, req.config_id)
         owner = build_owner_scope(user_type, user_id)
         persona_id, persona_name, system_prompt, temperature = (
             await self._resolve_persona_and_quota(req, owner=owner, role=role, cfg=cfg)
@@ -690,8 +863,17 @@ class LLMService:
                 extra_system_instruction=extra_system_instruction,
             )
         )
-        session_id = req.session_id or uuid.uuid4().hex
-        history = await self.get_history(session_id, owner)
+        is_incognito = bool(req.incognito)
+        if is_incognito:
+            session_id = (req.session_id or "").strip() or f"incognito_{uuid.uuid4().hex[:12]}"
+            history = [
+                {"role": m.role, "content": m.content}
+                for m in req.ephemeral_history[-12:]
+                if m.role in {"user", "assistant"} and m.content
+            ]
+        else:
+            session_id = req.session_id or uuid.uuid4().hex
+            history = await self.get_history(session_id, owner)
 
         is_mock = not cfg.is_configured
         active_cfg = cfg
@@ -704,7 +886,7 @@ class LLMService:
         t0 = time.perf_counter()
 
         if is_mock:
-            reply = self._build_mock_reply(cfg, req.message)
+            reply = self._build_mock_reply(cfg, req.message, image_count=len(images or []))
         else:
             adapter, llm = self._build_llm(cfg, temperature, streaming=False)
             messages = self._build_messages(
@@ -714,6 +896,7 @@ class LLMService:
                 tz_name=effective_tz,
                 inject_clock=inject_clock,
                 extra_system_blocks=extra_blocks,
+                images=images,
             )
             ai_msg: Any = None
             try:
@@ -745,6 +928,13 @@ class LLMService:
                 auto_fb = await sys_config_service.get_bool("ai.auto_fallback_enabled", default=True)
                 if auto_fb and is_fallback_eligible_error(primary_exc):
                     backups = await resolve_fallback_configs(exclude_id=cfg.id)
+                    if images:
+                        backups = [
+                            b
+                            for b in backups
+                            if (ad := get_provider_adapter(b.provider)) is not None
+                            and ad.supports_vision_model(b.model_name)
+                        ]
                     for fb_cfg in backups:
                         try:
                             fb_adapter, fb_llm = self._build_llm(
@@ -791,22 +981,23 @@ class LLMService:
             prompt_tokens, completion_tokens, token_usage = self._extract_token_breakdown(ai_msg)
 
         latency_ms = max(1, int((time.perf_counter() - t0) * 1000))
-        history.append({"role": "user", "content": req.message})
-        history.append({"role": "assistant", "content": reply})
-        await self.save_history(
-            session_id, history, owner, max_messages=active_cfg.max_history_messages
-        )
-        await self._persist_turn(
-            session_id=session_id,
-            user_type=user_type,
-            user_id=user_id,
-            model_name=active_cfg.model_name,
-            user_content=req.message,
-            assistant_content=reply,
-            token_usage=token_usage,
-            persona_id=persona_id,
-            persona_name=persona_name,
-        )
+        if not is_incognito:
+            history.append({"role": "user", "content": req.message})
+            history.append({"role": "assistant", "content": reply})
+            await self.save_history(
+                session_id, history, owner, max_messages=active_cfg.max_history_messages
+            )
+            await self._persist_turn(
+                session_id=session_id,
+                user_type=user_type,
+                user_id=user_id,
+                model_name=active_cfg.model_name,
+                user_content=req.message,
+                assistant_content=reply,
+                token_usage=token_usage,
+                persona_id=persona_id,
+                persona_name=persona_name,
+            )
         if persona_id is not None:
             await ai_persona_service.increment_persona_usage(persona_id)
         await ai_usage_service.record_usage(
@@ -840,6 +1031,7 @@ class LLMService:
             persona_id=persona_id,
             persona_name=persona_name,
             is_mock=is_mock,
+            incognito=is_incognito,
             history_length=len(history),
             token_usage=token_usage,
             love_profile_injected=love_profile_injected,
@@ -857,12 +1049,15 @@ class LLMService:
         username: str = "",
         role: str = "user",
         extra_system_instruction: str = "",
+        images: list[str] | None = None,
     ) -> tuple[str, RuntimeAIConfig, dict[str, Any], AsyncGenerator[tuple[str, str], None]]:
         """流式对话生成器，逐块产出 (event_type: 'reasoning' | 'delta' | 'usage', text_chunk)。"""
         inject_clock, effective_tz = await self._resolve_ai_runtime_policies(
             req.message, req.timezone
         )
         cfg = await resolve_runtime_config(config_id=req.config_id)
+        if images:
+            cfg = await self._resolve_vision_runtime_config(cfg, req.config_id)
         owner = build_owner_scope(user_type, user_id)
         persona_id, persona_name, system_prompt, temperature = (
             await self._resolve_persona_and_quota(req, owner=owner, role=role, cfg=cfg)
@@ -875,8 +1070,17 @@ class LLMService:
                 extra_system_instruction=extra_system_instruction,
             )
         )
-        session_id = req.session_id or uuid.uuid4().hex
-        history = await self.get_history(session_id, owner)
+        is_incognito = bool(req.incognito)
+        if is_incognito:
+            session_id = (req.session_id or "").strip() or f"incognito_{uuid.uuid4().hex[:12]}"
+            history = [
+                {"role": m.role, "content": m.content}
+                for m in req.ephemeral_history[-12:]
+                if m.role in {"user", "assistant"} and m.content
+            ]
+        else:
+            session_id = req.session_id or uuid.uuid4().hex
+            history = await self.get_history(session_id, owner)
 
         async def _generator() -> AsyncGenerator[tuple[str, str], None]:
             collected: list[str] = []
@@ -886,7 +1090,7 @@ class LLMService:
             active_cfg = cfg
             t0 = time.perf_counter()
             if not cfg.is_configured:
-                mock_text = self._build_mock_reply(cfg, req.message)
+                mock_text = self._build_mock_reply(cfg, req.message, image_count=len(images or []))
                 chunk_size = 8
                 for i in range(0, len(mock_text), chunk_size):
                     piece = mock_text[i : i + chunk_size]
@@ -902,6 +1106,7 @@ class LLMService:
                     tz_name=effective_tz,
                     inject_clock=inject_clock,
                     extra_system_blocks=extra_blocks,
+                    images=images,
                 )
                 emitted_any = False
                 try:
@@ -948,6 +1153,13 @@ class LLMService:
                     )
                     if not emitted_any and auto_fb and is_fallback_eligible_error(primary_exc):
                         backups = await resolve_fallback_configs(exclude_id=cfg.id)
+                        if images:
+                            backups = [
+                                b
+                                for b in backups
+                                if (ad := get_provider_adapter(b.provider)) is not None
+                                and ad.supports_vision_model(b.model_name)
+                            ]
                         for fb_cfg in backups:
                             fb_emitted = False
                             prompt_tokens = 0
@@ -1008,22 +1220,23 @@ class LLMService:
 
             latency_ms = max(1, int((time.perf_counter() - t0) * 1000))
             full_reply = "".join(collected)
-            history.append({"role": "user", "content": req.message})
-            history.append({"role": "assistant", "content": full_reply})
-            await self.save_history(
-                session_id, history, owner, max_messages=active_cfg.max_history_messages
-            )
-            await self._persist_turn(
-                session_id=session_id,
-                user_type=user_type,
-                user_id=user_id,
-                model_name=active_cfg.model_name,
-                user_content=req.message,
-                assistant_content=full_reply,
-                token_usage=token_usage,
-                persona_id=persona_id,
-                persona_name=persona_name,
-            )
+            if not is_incognito:
+                history.append({"role": "user", "content": req.message})
+                history.append({"role": "assistant", "content": full_reply})
+                await self.save_history(
+                    session_id, history, owner, max_messages=active_cfg.max_history_messages
+                )
+                await self._persist_turn(
+                    session_id=session_id,
+                    user_type=user_type,
+                    user_id=user_id,
+                    model_name=active_cfg.model_name,
+                    user_content=req.message,
+                    assistant_content=full_reply,
+                    token_usage=token_usage,
+                    persona_id=persona_id,
+                    persona_name=persona_name,
+                )
             if persona_id is not None:
                 await ai_persona_service.increment_persona_usage(persona_id)
             await ai_usage_service.record_usage(
@@ -1050,6 +1263,7 @@ class LLMService:
             "persona_name": persona_name,
             "love_profile_injected": love_profile_injected,
             "emotion_care": emotion_care,
+            "incognito": is_incognito,
         }
         return session_id, cfg, meta, _generator()
 

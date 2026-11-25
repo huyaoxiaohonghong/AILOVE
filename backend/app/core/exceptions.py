@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -46,14 +47,18 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def handle_validation_exception(
         _request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        errors = exc.errors()
-        first_msg = errors[0].get("msg", "参数校验失败") if errors else "参数校验失败"
+        safe_errors = jsonable_encoder(exc.errors(), custom_encoder={Exception: str})
+        first_msg = (
+            str(safe_errors[0].get("msg", "参数校验失败")) if safe_errors else "参数校验失败"
+        )
+        if first_msg.startswith("Value error, "):
+            first_msg = first_msg[len("Value error, ") :]
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content={
                 "code": 42200,
                 "message": f"请求参数错误: {first_msg}",
-                "data": errors,
+                "data": safe_errors,
             },
         )
 

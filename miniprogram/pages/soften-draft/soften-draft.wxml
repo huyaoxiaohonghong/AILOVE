@@ -1,0 +1,94 @@
+<view class="container safe-bottom">
+  <view class="intro-banner">
+    <view class="intro-title">🧊 先别发！情绪降温与话术柔化</view>
+    <view class="intro-sub">
+      气头上最容易发出伤感情的反话。先贴进来，AI 帮你留住体面与底线，换一种让对方听得进去的表达
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="field-head">
+      <text class="field-label">差点发出去的原话草稿 *</text>
+      <text class="paste-btn" bindtap="onPasteClipboard">📋 一键粘贴</text>
+    </view>
+    <textarea
+      class="msg-textarea"
+      placeholder="例如：算了随便你吧，反正你从来也不在乎我的感受"
+      value="{{draftMessage}}"
+      maxlength="2000"
+      auto-height="true"
+      bindinput="onDraftInput"
+    />
+
+    <view class="field-label" style="margin-top: 24rpx;">此刻你的情绪温度</view>
+    <view class="intensity-list">
+      <view
+        wx:for="{{intensities}}"
+        wx:key="code"
+        class="intensity-item {{intensity === item.code ? 'intensity-active' : ''}}"
+        data-code="{{item.code}}"
+        bindtap="onSelectIntensity"
+      >
+        <view class="intensity-name">{{item.label}}</view>
+        <view class="intensity-desc">{{item.desc}}</view>
+      </view>
+    </view>
+
+    <view class="field-label" style="margin-top: 24rpx;">前因背景（可选）</view>
+    <input
+      class="text-input"
+      placeholder="例如：约定好见面，对方临时放鸽子还没解释"
+      value="{{context}}"
+      maxlength="800"
+      bindinput="onContextInput"
+    />
+
+    <button
+      class="primary-btn submit-btn"
+      loading="{{generating}}"
+      disabled="{{generating}}"
+      bindtap="handleGenerate"
+    >
+      {{generating ? '正在为你降温改写...' : '帮我柔化成 3 个稳妥版本'}}
+    </button>
+  </view>
+
+  <view wx:if="{{errorText}}" class="card err-card">⚠️ {{errorText}}</view>
+
+  <view wx:if="{{resultText || generating}}" class="card result-card">
+    <view class="result-head">
+      <text class="result-badge">{{resultLabel}}</text>
+      <text wx:if="{{resultText}}" class="copy-all-btn" data-text="{{resultText}}" bindtap="onCopyText">
+        复制全文
+      </text>
+    </view>
+
+    <view wx:if="{{suggestedReplies.length > 0}}" class="quick-replies">
+      <view class="quick-replies-title">🌿 可直接发送的柔化版本</view>
+      <view wx:for="{{suggestedReplies}}" wx:key="*this" class="reply-quote-card">
+        <view class="reply-quote-txt" data-text="{{item}}" bindtap="onCopyText">{{item}}</view>
+        <view class="quote-ops">
+          <text class="quote-fav" data-text="{{item}}" bindtap="onFavoriteText">⭐</text>
+          <text class="reply-quote-copy" data-text="{{item}}" bindtap="onCopyText">复制</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="result-body">
+      <text user-select="true">{{resultText || '先深呼吸一次，正在帮你把情绪翻译成有效沟通...'}}</text>
+    </view>
+
+    <view wx:if="{{emotionCare}}" class="care-box">
+      <view class="care-box-title">🌙 {{emotionCare.title}}</view>
+      <view class="care-box-msg">{{emotionCare.message}}</view>
+    </view>
+
+    <button
+      wx:if="{{resultSessionId && !generating}}"
+      class="ghost-btn continue-btn"
+      bindtap="onContinueInChat"
+    >
+      转入对话继续聊 ›
+    </button>
+  </view>
+</view>

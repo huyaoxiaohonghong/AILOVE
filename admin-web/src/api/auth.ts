@@ -156,6 +156,7 @@ export function registerByEmail(data: {
   nickname?: string
   captcha_token: string
   email_code?: string
+  invite_code?: string
 }) {
   return request<AuthTokenResult>({
     url: '/auth/register',

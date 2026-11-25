@@ -37,6 +37,9 @@ function extractQuotedReplies(markdownText) {
 Page({
   data: {
     partnerMessage: '',
+    images: [],
+    hasVisionModel: false,
+    visionModelLabel: '',
     scene: 'ambiguous',
     tone: 'playful',
     myIntent: '',
@@ -76,6 +79,8 @@ Page({
       this.setData({
         scenes: (presets && presets.scenes && presets.scenes.length) ? presets.scenes : DEFAULT_SCENES,
         tones: (presets && presets.tones && presets.tones.length) ? presets.tones : DEFAULT_TONES,
+        hasVisionModel: Boolean(presets && presets.has_vision_model),
+        visionModelLabel: (presets && presets.vision_model_label) || '',
         loveProfileActive: Boolean(lp && lp.is_configured && lp.auto_inject),
       })
     } catch (_e) {
@@ -117,6 +122,68 @@ Page({
     this.setData({ tone: e.currentTarget.dataset.code })
   },
 
+  readFileAsDataUrl(filePath) {
+    const fs = wx.getFileSystemManager()
+    return new Promise((resolve, reject) => {
+      wx.compressImage({
+        src: filePath,
+        quality: 78,
+        success: (compRes) => {
+          const targetPath = compRes.tempFilePath || filePath
+          fs.readFile({
+            filePath: targetPath,
+            encoding: 'base64',
+            success: (r) => resolve(`data:image/jpeg;base64,${r.data}`),
+            fail: reject,
+          })
+        },
+        fail: () => {
+          fs.readFile({
+            filePath,
+            encoding: 'base64',
+            success: (r) => resolve(`data:image/jpeg;base64,${r.data}`),
+            fail: reject,
+          })
+        },
+      })
+    })
+  },
+
+  onChooseImages() {
+    const remain = Math.max(0, 3 - (this.data.images || []).length)
+    if (remain <= 0) {
+      wx.showToast({ title: '最多上传 3 张聊天截图', icon: 'none' })
+      return
+    }
+    wx.chooseMedia({
+      count: remain,
+      mediaType: ['image'],
+      sourceType: ['album', 'camera'],
+      sizeType: ['compressed'],
+      success: async (res) => {
+        const files = (res && res.tempFiles) || []
+        if (!files.length) return
+        const nextImages = (this.data.images || []).slice()
+        for (let i = 0; i < files.length; i += 1) {
+          try {
+            const dataUrl = await this.readFileAsDataUrl(files[i].tempFilePath)
+            nextImages.push(dataUrl)
+          } catch (_e) {
+            wx.showToast({ title: '部分图片读取失败', icon: 'none' })
+          }
+        }
+        this.setData({ images: nextImages.slice(0, 3) })
+      },
+    })
+  },
+
+  onRemoveImage(e) {
+    const idx = Number(e.currentTarget.dataset.idx)
+    const next = (this.data.images || []).slice()
+    next.splice(idx, 1)
+    this.setData({ images: next })
+  },
+
   stopGeneration() {
     if (this._flushTimer) {
       clearTimeout(this._flushTimer)
@@ -141,8 +208,9 @@ Page({
 
   async handleGenerate() {
     const msg = (this.data.partnerMessage || '').trim()
-    if (!msg) {
-      wx.showToast({ title: '请先粘贴或输入对方发来的原话', icon: 'none' })
+    const imgs = this.data.images || []
+    if (!msg && imgs.length === 0) {
+      wx.showToast({ title: '请粘贴对方原话，或至少上传 1 张聊天截图', icon: 'none' })
       return
     }
     if (this.data.generating) return
@@ -153,7 +221,7 @@ Page({
       generating: true,
       resultText: '',
       resultSessionId: '',
-      resultLabel: '高情商恋爱军师 · 正在拆解潜台词...',
+      resultLabel: imgs.length > 0 ? '视觉识图军师 · 正在读取截图...' : '高情商恋爱军师 · 正在拆解潜台词...',
       suggestedReplies: [],
       emotionCare: null,
       errorText: '',
@@ -164,6 +232,7 @@ Page({
       const handle = api.streamReplyHelper(
         {
           partner_message: msg,
+          images: imgs,
           scene: this.data.scene,
           tone: this.data.tone,
           my_intent: (this.data.myIntent || '').trim(),
@@ -220,6 +289,25 @@ Page({
         wx.showToast({ title: '已复制，可直接去微信粘贴', icon: 'success' })
       },
     })
+  },
+
+  async onFavoriteText(e) {
+    const txt = (e.currentTarget.dataset.text || '').trim()
+    if (!txt) return
+    const sc = (this.data.scenes || []).find((s) => s.code === this.data.scene)
+    try {
+      const res = await api.saveFavorite({
+        content: txt,
+        category: 'reply_helper',
+        scene_label: sc ? sc.label : '帮我回消息',
+      })
+      wx.showToast({
+        title: res && res.deduplicated ? '已在收藏夹中' : '已收藏到话术库',
+        icon: 'success',
+      })
+    } catch (err) {
+      wx.showToast({ title: (err && err.message) || '收藏失败', icon: 'none' })
+    }
   },
 
   onContinueInChat() {

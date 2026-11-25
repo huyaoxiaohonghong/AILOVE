@@ -657,6 +657,57 @@ async def resolve_fallback_configs(exclude_id: int | None = None) -> list[Runtim
     return candidates
 
 
+async def resolve_vision_config(config_id: int | None = None) -> RuntimeAIConfig | None:
+    """选取支持多模态识图的已启用模型配置；若指定 config_id 且支持识图则优先使用。"""
+    if config_id is not None:
+        picked = await resolve_runtime_config(config_id=config_id)
+        adapter = get_provider_adapter(picked.provider)
+        if picked.is_configured and adapter is not None and adapter.supports_vision_model(picked.model_name):
+            return picked
+
+    candidates: list[RuntimeAIConfig] = []
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            rows = (
+                await session.execute(select(AIModelConfig).where(AIModelConfig.is_enabled.is_(True)))
+            ).scalars().all()
+            for row in rows:
+                runtime = _row_to_runtime(row)
+                adapter = get_provider_adapter(runtime.provider)
+                if (
+                    runtime.is_configured
+                    and adapter is not None
+                    and adapter.supports_vision_model(runtime.model_name)
+                ):
+                    candidates.append(runtime)
+    except (SQLAlchemyError, OSError):
+        _ensure_mem_seed()
+        for rec in _mem_configs.values():
+            if not rec["is_enabled"]:
+                continue
+            runtime = _mem_to_runtime(rec)
+            adapter = get_provider_adapter(runtime.provider)
+            if (
+                runtime.is_configured
+                and adapter is not None
+                and adapter.supports_vision_model(runtime.model_name)
+            ):
+                candidates.append(runtime)
+
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda c: (
+            c.last_test_status != "ok",
+            not c.is_default,
+            c.id or 0,
+        )
+    )
+    return candidates[0]
+
+
 async def _record_test_outcome(
     config_id: int, ok_flag: bool, latency_ms: int, message: str
 ) -> None:

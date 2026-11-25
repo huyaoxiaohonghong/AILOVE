@@ -49,9 +49,22 @@ export interface PublicSystemConfig {
   registration_enabled: boolean
   slider_captcha_enabled: boolean
   email_verify_required: boolean
+  invite_code_required?: boolean
   email_service_enabled: boolean
   password_min_length: number
   configs: Record<string, unknown>
+}
+
+export interface InviteCodeItem {
+  id: number
+  code: string
+  note: string
+  max_uses: number
+  used_count: number
+  is_active: boolean
+  is_available: boolean
+  expires_at: string | null
+  created_at: string
 }
 
 export interface SysConfigItem {
@@ -147,5 +160,40 @@ export function sendAlertWebhookTest(message = '') {
     url: '/admin/system/alert/test',
     method: 'post',
     data: { message },
+  })
+}
+
+export function fetchInviteCodes() {
+  return request<{ items: InviteCodeItem[]; total: number }>({
+    url: '/admin/system/invite-codes',
+    method: 'get',
+  })
+}
+
+export function createInviteCode(data: {
+  note?: string
+  max_uses?: number
+  expires_days?: number | null
+  custom_code?: string
+}) {
+  return request<InviteCodeItem>({
+    url: '/admin/system/invite-codes',
+    method: 'post',
+    data,
+  })
+}
+
+export function toggleInviteCode(codeId: number, isActive: boolean) {
+  return request<InviteCodeItem>({
+    url: `/admin/system/invite-codes/${codeId}`,
+    method: 'patch',
+    data: { is_active: isActive },
+  })
+}
+
+export function deleteInviteCode(codeId: number) {
+  return request<{ deleted_id: number }>({
+    url: `/admin/system/invite-codes/${codeId}`,
+    method: 'delete',
   })
 }

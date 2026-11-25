@@ -7,6 +7,12 @@
         <text wx:if="{{conversations.length > 0}}" class="pill-count">{{conversations.length}}</text>
       </view>
       <view class="header-pill" bindtap="onNewChatTap">＋ 新对话</view>
+      <view
+        class="header-pill {{incognitoMode ? 'incognito-pill-on' : ''}}"
+        bindtap="onToggleIncognito"
+      >
+        🕵️ {{incognitoMode ? '无痕中' : '无痕'}}
+      </view>
     </view>
     <view class="header-right">
       <view
@@ -39,6 +45,10 @@
       </view>
     </view>
   </scroll-view>
+
+  <view wx:if="{{incognitoMode}}" class="incognito-strip">
+    🕵️ 无痕倾诉模式：本轮内容绝不存入云端历史与情感手账，退出即销毁
+  </view>
 
   <!-- 对话消息滚动区 -->
   <scroll-view
@@ -104,8 +114,16 @@
             </view>
           </view>
 
-          <!-- 底部复制操作 -->
+          <!-- 底部复制与收藏操作 -->
           <view wx:if="{{item.role === 'assistant' && item.content}}" class="bubble-foot">
+            <text
+              class="fav-btn"
+              data-content="{{item.content}}"
+              data-label="{{item.modelLabel}}"
+              bindtap="onFavoriteMessage"
+            >
+              ⭐ 收藏
+            </text>
             <text class="copy-btn" data-content="{{item.content}}" bindtap="onCopyMessage">
               复制回复
             </text>
@@ -116,10 +134,11 @@
     </view>
   </scroll-view>
 
-  <!-- 输入框上方：帮我回消息 + 当前导师快捷提问 -->
+  <!-- 输入框上方：帮我回消息 + 先别发 + 当前导师快捷提问 -->
   <scroll-view class="starter-scroll" scroll-x="true" enable-flex="true">
     <view class="starter-row">
       <view class="reply-helper-pill" bindtap="goReplyHelper">💬 帮我回消息</view>
+      <view class="soften-pill" bindtap="goSoftenDraft">🧊 先别发</view>
       <view
         wx:for="{{activePersona ? activePersona.starter_prompts : []}}"
         wx:key="*this"

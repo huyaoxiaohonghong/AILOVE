@@ -89,3 +89,20 @@ class AuditLogItem(BaseModel):
     request_summary: str
     error_message: str
     created_at: datetime | None = None
+
+
+class InviteCodeCreateRequest(BaseModel):
+    note: str = Field(default="", max_length=128, description="备注（如：送给闺蜜 / 测试小群）")
+    max_uses: int = Field(default=1, ge=0, le=1000, description="最大可用次数，0 表示不限次")
+    expires_days: int | None = Field(
+        default=None, ge=1, le=3650, description="有效天数（留空表示永久有效）"
+    )
+    custom_code: str = Field(
+        default="",
+        max_length=32,
+        description="可选：自定义邀请码（留空自动生成 LOVE-XXXXXX）",
+    )
+
+
+class InviteCodeToggleRequest(BaseModel):
+    is_active: bool = Field(..., description="是否启用该邀请码")

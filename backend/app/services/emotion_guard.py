@@ -62,14 +62,27 @@ REPLY_TONES: tuple[dict[str, str], ...] = (
     {"code": "humorous", "label": "幽默破冰", "desc": "轻松调侃化解尴尬或沉默"},
 )
 
+SOFTEN_INTENSITIES: tuple[dict[str, str], ...] = (
+    {"code": "mild", "label": "有点委屈", "desc": "心里酸酸的，想温柔表达感受不被忽略"},
+    {"code": "medium", "label": "明显生气", "desc": "有些火大或失望，想守住底线但不想翻脸"},
+    {"code": "heated", "label": "快上头了", "desc": "差点把狠话/反话发出去，急需冷静降温"},
+)
+
 _SCENE_MAP = {item["code"]: item for item in REPLY_SCENES}
 _TONE_MAP = {item["code"]: item for item in REPLY_TONES}
+_INTENSITY_MAP = {item["code"]: item for item in SOFTEN_INTENSITIES}
 
 
 def get_reply_helper_presets() -> dict[str, Any]:
     return {
         "scenes": list(REPLY_SCENES),
         "tones": list(REPLY_TONES),
+    }
+
+
+def get_soften_draft_presets() -> dict[str, Any]:
+    return {
+        "intensities": list(SOFTEN_INTENSITIES),
     }
 
 
@@ -144,13 +157,9 @@ def build_reply_helper_prompt(
     tone: str = "playful",
     context: str = "",
     my_intent: str = "",
+    image_count: int = 0,
 ) -> tuple[str, str]:
-    """构造「帮我回消息 / 聊天记录拆解」结构化用户消息与专用输出格式要求。
-
-    返回 (user_message, extra_instruction)：
-    - user_message：可读性好、适合保存在历史会话中的结构化提问正文
-    - extra_instruction：注入到 system prompt 的结构化拆解输出规范
-    """
+    """构造「帮我回消息 / 聊天记录拆解（含截图识图）」结构化用户消息与专用输出格式要求。"""
     scene_info = _SCENE_MAP.get(scene, REPLY_SCENES[0])
     tone_info = _TONE_MAP.get(tone, REPLY_TONES[0])
 
@@ -158,20 +167,33 @@ def build_reply_helper_prompt(
     clean_ctx = context.strip()
     clean_intent = my_intent.strip()
 
-    parts = [
-        f"【帮我回消息 · {scene_info['label']} / {tone_info['label']}】",
-        f"对方原话：\n「{clean_partner}」",
-    ]
+    parts = [f"【帮我回消息 · {scene_info['label']} / {tone_info['label']}】"]
+    if image_count > 0:
+        parts.append(f"[已附 {image_count} 张微信聊天截图]")
+    if clean_partner:
+        parts.append(f"对方原话：\n「{clean_partner}」")
+    elif image_count > 0:
+        parts.append(
+            "请先仔细识别我上传的微信聊天截图中的全部文字内容、左右双方发言顺序、"
+            "消息时间间隔与表情/标点情绪，再替我剖析与拟定回复。"
+        )
     if clean_ctx:
         parts.append(f"前文/背景补充：{clean_ctx}")
     if clean_intent:
         parts.append(f"我真实想表达的核心意思：{clean_intent}")
     parts.append(f"请帮我拆解潜台词，并按「{tone_info['label']}」语气给我 3 条可直接发送的高情商回复。")
 
+    vision_rule = (
+        "- 用户附带了微信聊天截图：请先看清左右气泡归属（右侧通常为用户本人，"
+        "左侧通常为对方）、时间差、回复字数反差与表情包含义，再做判断。\n"
+        if image_count > 0
+        else ""
+    )
     extra_instruction = (
         "[帮我回消息结构化拆解指令]\n"
         f"- 当前场景：{scene_info['label']}（{scene_info['desc']}）\n"
         f"- 目标语气：{tone_info['label']}（{tone_info['desc']}）\n"
+        f"{vision_rule}"
         "- 请严格采用以下清晰的 Markdown 分节输出：\n"
         "  ### 🔍 潜台词与情绪拆解\n"
         "  简明点出对方字面之外的心理状态、试探意图或情绪温度（2~3 条要点）。\n"
@@ -180,5 +202,44 @@ def build_reply_helper_prompt(
         "每条回复用引用块 `>` 单独一行写出来方便直接复制，并在下方用一句话说明发送效果。\n"
         "  ### ⚠️ 避坑提醒\n"
         "  指出此刻最容易踩坑的 1~2 种回复方式及原因。"
+    )
+    return "\n\n".join(parts), extra_instruction
+
+
+def build_soften_draft_prompt(
+    *,
+    draft_message: str,
+    context: str = "",
+    intensity: str = "heated",
+) -> tuple[str, str]:
+    """构造「先别发！情绪降温与话术柔化器」结构化提问与三版本输出规范。"""
+    level = _INTENSITY_MAP.get(intensity, SOFTEN_INTENSITIES[2])
+    clean_draft = draft_message.strip()
+    clean_ctx = context.strip()
+
+    parts = [
+        f"【先别发！话术柔化 · {level['label']}】",
+        f"我差点发出去的原话草稿：\n「{clean_draft}」",
+    ]
+    if clean_ctx:
+        parts.append(f"吵架/委屈前情背景：{clean_ctx}")
+    parts.append(
+        "请先帮我冷静踩下刹车，告诉我原话可能带来的误解，并改写成 3 个不委屈自己、又体面有效的版本。"
+    )
+
+    extra_instruction = (
+        "[先别发 · 情绪降温与话术柔化指令]\n"
+        f"- 当前情绪温度：{level['label']}（{level['desc']}）\n"
+        "- 核心原则：绝不劝用户无底线忍让或压抑合理诉求，而是把「带刺的反话/攻击/指责」"
+        "转化为「清晰表达感受 + 坚定且体面的边界 + 可沟通的出口」。\n"
+        "- 请严格采用以下 Markdown 分节输出：\n"
+        "  ### 🧊 先深呼吸：原话可能引发的误解\n"
+        "  客观指出原话如果直接发出，对方第一反应会感受到什么防御或刺激，为什么可能把问题推远（2 条要点）。\n"
+        "  ### 🌿 3 个更稳妥的替代版本\n"
+        "  分别给出 3 个不同侧重的改写版本（标注「温柔表达委屈版」「不卑不亢立边界版」「轻俏皮给台阶版」），"
+        "每条可直接发送的改写回复必须用引用块 `>` 单独一行写出（方便用户一键复制与收藏），"
+        "再附一句话说明适用心态。\n"
+        "  ### 💛 给此刻的你一句托底\n"
+        "  用温暖、站在用户这边的 1~2 句话接住 TA 此刻的情绪。"
     )
     return "\n\n".join(parts), extra_instruction

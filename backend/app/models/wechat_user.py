@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, SmallInteger, String
+from sqlalchemy import BigInteger, Boolean, DateTime, SmallInteger, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -20,6 +20,9 @@ class WechatUser(Base, TimestampMixin):
     avatar_url: Mapped[str] = mapped_column(String(512), default="", nullable=False, comment="头像")
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True, comment="手机号")
     status: Mapped[int] = mapped_column(SmallInteger, default=1, nullable=False, comment="1正常 0禁用")
+    invite_verified: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, comment="是否已通过小圈子邀请码验证"
+    )
     last_login_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True, comment="最后登录时间"
     )

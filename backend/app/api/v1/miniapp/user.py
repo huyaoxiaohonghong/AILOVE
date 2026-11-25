@@ -11,8 +11,9 @@ from app.api.deps import get_current_miniapp_user
 from app.core.exceptions import BusinessException
 from app.db.mysql import get_session_factory
 from app.models.wechat_user import WechatUser
-from app.schemas.auth import MiniappProfileUpdateRequest
+from app.schemas.auth import MiniappProfileUpdateRequest, MiniappVerifyInviteRequest
 from app.schemas.common import ok
+from app.services import invite_code_service, sys_config_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/user", tags=["小程序-用户"])
@@ -21,18 +22,27 @@ router = APIRouter(prefix="/user", tags=["小程序-用户"])
 _mem_miniapp_profiles: dict[str, dict[str, Any]] = {}
 
 
-def _fallback_profile(current_user: dict[str, Any]) -> dict[str, Any]:
+def _fallback_profile(
+    current_user: dict[str, Any], *, invite_required: bool = False
+) -> dict[str, Any]:
     openid = str(current_user.get("openid", ""))
     cached = _mem_miniapp_profiles.get(openid)
     if cached:
-        return dict(cached)
+        res = dict(cached)
+        res["invite_required"] = invite_required
+        if not invite_required:
+            res["invite_verified"] = True
+        return res
     raw_sub = str(current_user.get("sub", "0"))
+    verified = True if not invite_required else bool(current_user.get("invite_verified", False))
     return {
         "id": int(raw_sub) if raw_sub.isdigit() else 0,
         "openid": openid,
         "nickname": str(current_user.get("nickname") or "微信用户"),
         "avatar_url": str(current_user.get("avatar_url") or ""),
         "status": 1,
+        "invite_verified": verified,
+        "invite_required": invite_required,
     }
 
 
@@ -41,6 +51,9 @@ async def get_miniapp_profile(
     current_user: dict[str, Any] = Depends(get_current_miniapp_user),
 ):
     openid = str(current_user.get("openid", ""))
+    invite_required = await sys_config_service.get_bool(
+        "registration.invite_code_required", default=False
+    )
     try:
         factory = get_session_factory()
         async with factory() as session:
@@ -56,11 +69,13 @@ async def get_miniapp_profile(
                         "avatar_url": user.avatar_url or "",
                         "phone": user.phone,
                         "status": user.status,
+                        "invite_verified": bool(user.invite_verified) if invite_required else True,
+                        "invite_required": invite_required,
                     }
                 )
     except (SQLAlchemyError, OSError) as exc:
         logger.debug("Miniapp profile DB read fallback: %s", exc)
-    return ok(_fallback_profile(current_user))
+    return ok(_fallback_profile(current_user, invite_required=invite_required))
 
 
 @router.patch("/profile", summary="更新当前小程序用户昵称或头像")
@@ -122,3 +137,46 @@ async def update_miniapp_profile(
     if openid:
         _mem_miniapp_profiles[openid] = prof
     return ok(prof, message="个人资料已更新")
+
+
+@router.post("/verify-invite", summary="核销小圈子内测邀请码并激活小程序 AI 权限")
+async def verify_miniapp_invite_code(
+    req: MiniappVerifyInviteRequest,
+    current_user: dict[str, Any] = Depends(get_current_miniapp_user),
+):
+    openid = str(current_user.get("openid", ""))
+    await invite_code_service.verify_and_consume_invite_code(req.invite_code)
+    invite_required = await sys_config_service.get_bool(
+        "registration.invite_code_required", default=False
+    )
+
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            user = (
+                await session.execute(select(WechatUser).where(WechatUser.openid == openid))
+            ).scalar_one_or_none()
+            if user is not None:
+                user.invite_verified = True
+                await session.commit()
+                return ok(
+                    {
+                        "id": user.id,
+                        "openid": user.openid,
+                        "nickname": user.nickname or "微信用户",
+                        "avatar_url": user.avatar_url or "",
+                        "phone": user.phone,
+                        "status": user.status,
+                        "invite_verified": True,
+                        "invite_required": invite_required,
+                    },
+                    message="邀请码核销成功，欢迎加入 AILOVE",
+                )
+    except (SQLAlchemyError, OSError) as exc:
+        logger.debug("Miniapp invite DB update fallback: %s", exc)
+
+    prof = _fallback_profile(current_user, invite_required=invite_required)
+    prof["invite_verified"] = True
+    if openid:
+        _mem_miniapp_profiles[openid] = prof
+    return ok(prof, message="邀请码核销成功，欢迎加入 AILOVE")

@@ -52,6 +52,7 @@ export const useAuthStore = defineStore('auth', () => {
     nickname?: string
     captcha_token: string
     email_code?: string
+    invite_code?: string
   }) {
     const res = await registerByEmail(payload)
     token.value = res.access_token

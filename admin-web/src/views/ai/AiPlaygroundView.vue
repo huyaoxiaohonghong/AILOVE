@@ -5,31 +5,42 @@ import { ElMessage, ElMessageBox } from '@/plugins/element-plus'
 import { ChatDotRound, MagicStick, Postcard } from '@element-plus/icons-vue'
 import {
   clearMyLoveProfile,
+  createFavoriteReply,
   deleteAiConversation,
+  deleteFavoriteReply,
+  exportMyJournalFile,
   fetchAiConversations,
   fetchAvailableModels,
   fetchConversationMessages,
+  fetchFavoriteReplies,
   fetchMyAiQuota,
   fetchMyLoveProfile,
   fetchPublicPersonas,
   fetchReplyHelperPresets,
+  fetchSoftenDraftPresets,
+  purgeMyAiData,
   renameAiConversation,
   saveMyLoveProfile,
   sendAiChat,
   sendReplyHelper,
+  sendSoftenDraft,
   streamAiChat,
   streamReplyHelper,
+  streamSoftenDraft,
   updateAiConversation,
   type AIConversationItem,
   type AIPersonaItem,
   type AIUserQuota,
   type AvailableAIModel,
   type EmotionCareNotice,
+  type FavoriteCategory,
+  type FavoriteReplyItem,
   type LoveProfilePresets,
   type RelationshipStage,
   type ReplyHelperPresets,
   type ReplyHelperScene,
   type ReplyHelperTone,
+  type SoftenIntensity,
   type UserLoveProfile,
 } from '@/api/ai'
 import { decodeUtf8Base64, renderMarkdown } from '@/utils/markdown'
@@ -139,9 +150,11 @@ const loveForm = reactive<{
   auto_inject: true,
 })
 
-// 「帮我回消息」结构化工具状态
+// 「帮我回消息 2.0」结构化工具状态（支持微信截图识图）
 const replyHelperVisible = ref(false)
 const replyPresets = ref<ReplyHelperPresets>(DEFAULT_REPLY_PRESETS)
+const replyImages = ref<string[]>([])
+const replyFileInputRef = ref<HTMLInputElement | null>(null)
 const replyForm = reactive<{
   partner_message: string
   scene: ReplyHelperScene
@@ -155,6 +168,34 @@ const replyForm = reactive<{
   context: '',
   my_intent: '',
 })
+
+// 「先别发！」话术柔化器状态
+const softenVisible = ref(false)
+const softenIntensities = ref<Array<{ code: SoftenIntensity; label: string; desc: string }>>([
+  { code: 'mild', label: '有点委屈', desc: '心里酸酸的，想温柔表达感受不被忽略' },
+  { code: 'medium', label: '明显生气', desc: '有些火大或失望，想守住底线但不想翻脸' },
+  { code: 'heated', label: '快上头了', desc: '差点把狠话/反话发出去，急需冷静降温' },
+])
+const softenForm = reactive<{
+  draft_message: string
+  intensity: SoftenIntensity
+  context: string
+}>({
+  draft_message: '',
+  intensity: 'heated',
+  context: '',
+})
+
+// 无痕倾诉模式 & 话术收藏夹 & 个人数据主权
+const incognitoMode = ref(false)
+const favoritesDrawerVisible = ref(false)
+const favoritesLoading = ref(false)
+const favoriteItems = ref<FavoriteReplyItem[]>([])
+const favoriteFilter = ref('all')
+const newFavContent = ref('')
+const newFavNote = ref('')
+const exportingJournal = ref(false)
+const purgingData = ref(false)
 
 const sessionId = ref('')
 const inputText = ref('')
@@ -242,13 +283,169 @@ async function loadLoveProfile() {
 
 async function loadReplyPresets() {
   try {
-    const res = await fetchReplyHelperPresets()
+    const [res, softenRes] = await Promise.all([
+      fetchReplyHelperPresets(),
+      fetchSoftenDraftPresets().catch(() => null),
+    ])
     if (res.scenes?.length && res.tones?.length) {
       replyPresets.value = res
+    }
+    if (softenRes?.intensities?.length) {
+      softenIntensities.value = softenRes.intensities
     }
   } catch {
     // 使用内置默认值
   }
+}
+
+async function loadFavorites() {
+  favoritesLoading.value = true
+  try {
+    const res = await fetchFavoriteReplies(favoriteFilter.value)
+    favoriteItems.value = res.items
+  } catch {
+    // 忽略
+  } finally {
+    favoritesLoading.value = false
+  }
+}
+
+function openFavoritesDrawer() {
+  favoritesDrawerVisible.value = true
+  void loadFavorites()
+}
+
+function extractFirstQuoteOrFull(text: string): string {
+  const lines = (text || '').split('\n')
+  for (const raw of lines) {
+    const trimmed = raw.trim()
+    if (trimmed.startsWith('>')) {
+      const cleaned = trimmed.replace(/^>+\s*/, '').replace(/^["「『]+|["」』]+$/g, '').trim()
+      if (cleaned.length >= 4) return cleaned
+    }
+  }
+  return (text || '').trim().slice(0, 600)
+}
+
+async function handleFavoriteBubble(msg: ChatBubble) {
+  const snippet = extractFirstQuoteOrFull(msg.content)
+  if (!snippet) return
+  try {
+    const cat: FavoriteCategory = msg.modelLabel?.includes('调解')
+      ? 'soften'
+      : msg.modelLabel?.includes('军师')
+        ? 'reply_helper'
+        : 'chat'
+    const res = await createFavoriteReply({
+      content: snippet,
+      category: cat,
+      scene_label: msg.modelLabel?.split('(')[0]?.trim() || 'AI 对话',
+    })
+    ElMessage.success(res.deduplicated ? '已在收藏夹中' : '已收藏到高情商话术库')
+  } catch {
+    // 忽略
+  }
+}
+
+async function handleAddManualFavorite() {
+  const content = newFavContent.value.trim()
+  if (!content) {
+    ElMessage.warning('请输入要收藏的话术')
+    return
+  }
+  await createFavoriteReply({
+    content,
+    category: 'custom',
+    scene_label: '自定义备忘',
+    note: newFavNote.value.trim(),
+  })
+  newFavContent.value = ''
+  newFavNote.value = ''
+  ElMessage.success('已保存到话术收藏夹')
+  await loadFavorites()
+}
+
+async function handleDeleteFavorite(id: number) {
+  await deleteFavoriteReply(id)
+  ElMessage.success('已移出收藏夹')
+  await loadFavorites()
+}
+
+async function handleExportMyJournal() {
+  exportingJournal.value = true
+  try {
+    const fname = await exportMyJournalFile()
+    ElMessage.success(`已导出私密情感手账：${fname}`)
+  } finally {
+    exportingJournal.value = false
+  }
+}
+
+async function handlePurgeAllMyData() {
+  try {
+    await ElMessageBox.confirm(
+      '将彻底删除你账号下的全部云端历史会话、情感档案记忆卡与话术收藏，不可恢复！确认继续？',
+      '彻底清除个人数据',
+      { confirmButtonText: '确认彻底清除', cancelButtonText: '取消', type: 'warning' },
+    )
+    purgingData.value = true
+    await purgeMyAiData(true, true)
+    handleNewConversation()
+    await Promise.all([loadConversations(), loadLoveProfile()])
+    ElMessage.success('你的全部云端私密情感数据已彻底清空')
+  } catch {
+    // 取消
+  } finally {
+    purgingData.value = false
+  }
+}
+
+function compressImageToDataUrl(file: File, maxDim = 1280): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('读取图片失败'))
+    reader.onload = () => {
+      const img = new Image()
+      img.onerror = () => reject(new Error('解析图片失败'))
+      img.onload = () => {
+        const scale = Math.min(1, maxDim / Math.max(img.width, img.height))
+        const w = Math.max(1, Math.round(img.width * scale))
+        const h = Math.max(1, Math.round(img.height * scale))
+        const canvas = document.createElement('canvas')
+        canvas.width = w
+        canvas.height = h
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          resolve(String(reader.result || ''))
+          return
+        }
+        ctx.drawImage(img, 0, 0, w, h)
+        resolve(canvas.toDataURL('image/jpeg', 0.82))
+      }
+      img.src = String(reader.result || '')
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
+async function handleReplyImageChange(evt: Event) {
+  const input = evt.target as HTMLInputElement | null
+  const files = Array.from(input?.files || [])
+  if (!files.length) return
+  const remain = Math.max(0, 3 - replyImages.value.length)
+  for (const file of files.slice(0, remain)) {
+    try {
+      const dataUrl = await compressImageToDataUrl(file)
+      replyImages.value.push(dataUrl)
+    } catch {
+      ElMessage.warning(`截图 ${file.name} 处理失败`)
+    }
+  }
+  if (input) input.value = ''
+}
+
+function removeReplyImage(idx: number) {
+  replyImages.value.splice(idx, 1)
 }
 
 function openLoveProfileDrawer() {
@@ -504,6 +701,13 @@ async function sendPromptText(text: string, appendUserBubble = true) {
 
   try {
     const clientTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai'
+    const ephemeralHist = incognitoMode.value
+      ? messages.value
+          .slice(1, -1)
+          .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content && !m.isError)
+          .slice(-12)
+          .map((m) => ({ role: m.role, content: m.content }))
+      : undefined
     const payload = {
       message: text,
       session_id: sessionId.value || undefined,
@@ -511,6 +715,8 @@ async function sendPromptText(text: string, appendUserBubble = true) {
       persona_id: selectedPersonaId.value,
       system_prompt: systemPrompt.value.trim() || undefined,
       timezone: clientTz,
+      incognito: incognitoMode.value,
+      ephemeral_history: ephemeralHist,
     }
 
     if (useStream.value) {
@@ -581,8 +787,9 @@ async function sendPromptText(text: string, appendUserBubble = true) {
 
 async function handleSubmitReplyHelper() {
   const partnerMsg = replyForm.partner_message.trim()
-  if (!partnerMsg) {
-    ElMessage.warning('请先粘贴或输入对方发来的原话')
+  const imgs = [...replyImages.value]
+  if (!partnerMsg && imgs.length === 0) {
+    ElMessage.warning('请粘贴对方原话或至少上传 1 张聊天截图')
     return
   }
   if (sending.value) return
@@ -592,10 +799,9 @@ async function handleSubmitReplyHelper() {
   const toneLabel =
     replyPresets.value.tones.find((t) => t.code === replyForm.tone)?.label || replyForm.tone
 
-  const previewLines = [
-    `【帮我回消息 · ${sceneLabel} / ${toneLabel}】`,
-    `对方原话：「${partnerMsg}」`,
-  ]
+  const previewLines = [`【帮我回消息 · ${sceneLabel} / ${toneLabel}】`]
+  if (imgs.length > 0) previewLines.push(`[已附 ${imgs.length} 张微信聊天截图]`)
+  if (partnerMsg) previewLines.push(`对方原话：「${partnerMsg}」`)
   if (replyForm.my_intent.trim()) {
     previewLines.push(`我想表达：${replyForm.my_intent.trim()}`)
   }
@@ -613,7 +819,7 @@ async function handleSubmitReplyHelper() {
     role: 'assistant',
     content: '',
     reasoning: '',
-    modelLabel: '高情商恋爱军师 · 拆解中...',
+    modelLabel: imgs.length > 0 ? '视觉识图军师 · 读图中...' : '高情商恋爱军师 · 拆解中...',
   }
   messages.value.push(userBubble, assistantMsg)
   await scrollToBottom()
@@ -622,6 +828,7 @@ async function handleSubmitReplyHelper() {
     const clientTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai'
     const payload = {
       partner_message: partnerMsg,
+      images: imgs,
       scene: replyForm.scene,
       tone: replyForm.tone,
       context: replyForm.context.trim(),
@@ -630,6 +837,7 @@ async function handleSubmitReplyHelper() {
       config_id: selectedConfigId.value,
       persona_id: selectedPersonaId.value,
       timezone: clientTz,
+      incognito: incognitoMode.value,
     }
 
     if (useStream.value) {
@@ -694,6 +902,119 @@ async function handleSubmitReplyHelper() {
     replyForm.partner_message = ''
     replyForm.context = ''
     replyForm.my_intent = ''
+    replyImages.value = []
+    void Promise.all([loadConversations(), loadQuota()])
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      assistantMsg.content = assistantMsg.content
+        ? `${assistantMsg.content}\n\n（已停止生成）`
+        : '（已停止生成）'
+    } else {
+      assistantMsg.isError = true
+      assistantMsg.content = `请求出错：${err instanceof Error ? err.message : '未知错误'}`
+    }
+  } finally {
+    abortController = null
+    sending.value = false
+  }
+}
+
+async function handleSubmitSoftenDraft() {
+  const draftMsg = softenForm.draft_message.trim()
+  if (!draftMsg) {
+    ElMessage.warning('请先粘贴你打算发出去但怕伤人的草稿')
+    return
+  }
+  if (sending.value) return
+
+  const lvLabel =
+    softenIntensities.value.find((i) => i.code === softenForm.intensity)?.label ||
+    softenForm.intensity
+  softenVisible.value = false
+  sending.value = true
+
+  const userBubble: ChatBubble = {
+    id: Date.now(),
+    role: 'user',
+    content: `【先别发！话术柔化 · ${lvLabel}】\n原话草稿：「${draftMsg}」`,
+  }
+  const assistantMsg: ChatBubble = {
+    id: Date.now() + 1,
+    role: 'assistant',
+    content: '',
+    reasoning: '',
+    modelLabel: '吵架降温调解员 · 降温改写中...',
+  }
+  messages.value.push(userBubble, assistantMsg)
+  await scrollToBottom()
+
+  try {
+    const clientTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai'
+    const payload = {
+      draft_message: draftMsg,
+      intensity: softenForm.intensity,
+      context: softenForm.context.trim(),
+      session_id: sessionId.value || undefined,
+      config_id: selectedConfigId.value,
+      persona_id: selectedPersonaId.value,
+      timezone: clientTz,
+      incognito: incognitoMode.value,
+    }
+    if (useStream.value) {
+      abortController = new AbortController()
+      await streamSoftenDraft(
+        payload,
+        {
+          onMeta: (meta) => {
+            sessionId.value = meta.session_id
+            if (meta.persona_id) selectedPersonaId.value = meta.persona_id
+            if (meta.prompt_preview) userBubble.content = meta.prompt_preview
+            assistantMsg.loveProfileInjected = Boolean(meta.love_profile_injected)
+            assistantMsg.emotionCare = meta.emotion_care ?? null
+            if (meta.model) {
+              const pPrefix = meta.persona_name ? `${meta.persona_name} · ` : ''
+              assistantMsg.modelLabel = `${pPrefix}${meta.config_name || 'AI'} (${meta.model})${meta.is_mock ? ' · 演示' : ''}`
+            }
+          },
+          onFallback: (backupLabel) => {
+            assistantMsg.modelLabel = `${backupLabel} · 自动容灾接管`
+          },
+          onReasoning: (chunk) => {
+            assistantMsg.reasoning = (assistantMsg.reasoning || '') + chunk
+            void scrollToBottom()
+          },
+          onDelta: (chunk) => {
+            assistantMsg.content += chunk
+            void scrollToBottom()
+          },
+          onUsage: (total) => {
+            assistantMsg.tokenUsage = total
+          },
+          onError: (errMsg) => {
+            assistantMsg.isError = true
+            assistantMsg.content = assistantMsg.content
+              ? `${assistantMsg.content}\n\n⚠️ ${errMsg}`
+              : `⚠️ ${errMsg}`
+          },
+        },
+        abortController.signal,
+      )
+    } else {
+      const res = await sendSoftenDraft(payload)
+      sessionId.value = res.session_id
+      if (res.persona_id) selectedPersonaId.value = res.persona_id
+      assistantMsg.reasoning = res.reasoning || ''
+      assistantMsg.content = res.reply
+      assistantMsg.tokenUsage = res.token_usage || undefined
+      assistantMsg.loveProfileInjected = Boolean(res.love_profile_injected)
+      assistantMsg.emotionCare = res.emotion_care ?? null
+      const pPrefix = res.persona_name ? `${res.persona_name} · ` : ''
+      const fbSuffix = res.fallback_used ? ' · 自动容灾接管' : ''
+      assistantMsg.modelLabel = `${pPrefix}${res.config_name || 'AI'} (${res.model})${res.is_mock ? ' · 演示' : ''}${fbSuffix}`
+      await scrollToBottom()
+    }
+    softenForm.draft_message = ''
+    softenForm.context = ''
     void Promise.all([loadConversations(), loadQuota()])
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
@@ -809,6 +1130,16 @@ onBeforeUnmount(() => {
         <el-button plain size="small" :icon="ChatDotRound" @click="replyHelperVisible = true">
           帮我回消息
         </el-button>
+        <el-button plain size="small" @click="softenVisible = true">🧊 先别发</el-button>
+        <el-button plain size="small" @click="openFavoritesDrawer">⭐ 话术库</el-button>
+        <el-button
+          :type="incognitoMode ? 'warning' : 'default'"
+          plain
+          size="small"
+          @click="incognitoMode = !incognitoMode"
+        >
+          {{ incognitoMode ? '🕵️ 无痕已开' : '🕵️ 无痕倾诉' }}
+        </el-button>
         <el-button plain size="small" :icon="MagicStick" @click="plazaDrawerVisible = true">
           智能体广场
         </el-button>
@@ -901,10 +1232,21 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </div>
+        <div class="history-foot-ops">
+          <el-button size="small" plain :loading="exportingJournal" @click="handleExportMyJournal">
+            导出手账 .md
+          </el-button>
+          <el-button size="small" type="danger" plain :loading="purgingData" @click="handlePurgeAllMyData">
+            清空个人数据
+          </el-button>
+        </div>
       </aside>
 
       <!-- 右侧对话主工作台 -->
       <div v-loading="loadingHistory" class="page-card playground-card">
+        <div v-if="incognitoMode" class="incognito-banner">
+          🕵️ 已开启「无痕倾诉」模式：本轮对话仅保留在当前页面，绝不保存云端记录或计入导出手账。
+        </div>
         <div class="prompt-row">
           <el-input
             v-model="systemPrompt"
@@ -1016,6 +1358,9 @@ onBeforeUnmount(() => {
                   Tokens · {{ msg.tokenUsage }}
                 </span>
                 <div class="bubble-btns">
+                  <button type="button" class="mini-action-btn" @click="handleFavoriteBubble(msg)">
+                    ⭐ 收藏
+                  </button>
                   <button type="button" class="mini-action-btn" @click="copyText(msg.content)">
                     复制全文
                   </button>
@@ -1040,7 +1385,15 @@ onBeforeUnmount(() => {
             :disabled="sending"
             @click="replyHelperVisible = true"
           >
-            💬 帮我回消息 / 拆解潜台词
+            💬 帮我回消息 / 识图拆解
+          </button>
+          <button
+            type="button"
+            class="reply-helper-trigger"
+            :disabled="sending"
+            @click="softenVisible = true"
+          >
+            🧊 先别发 · 话术柔化
           </button>
           <template v-if="activePersona?.starter_prompts?.length">
             <span class="starter-label">{{ activePersona.avatar_emoji }} 快捷提问：</span>
@@ -1267,15 +1620,48 @@ onBeforeUnmount(() => {
       </div>
     </el-drawer>
 
-    <!-- 「帮我回消息 / 聊天记录拆解」快捷弹窗 -->
+    <!-- 「帮我回消息 2.0 / 聊天截图识图拆解」快捷弹窗 -->
     <el-dialog
       v-model="replyHelperVisible"
-      title="💬 帮我回消息 · 潜台词拆解与高情商备选"
-      width="580px"
+      title="💬 帮我回消息 2.0 · 识图拆解与高情商备选"
+      width="600px"
       destroy-on-close
     >
       <el-form label-position="top">
-        <el-form-item label="粘贴对方发来的原话 / 聊天片段" required>
+        <el-form-item label="微信聊天截图（可选，最多 3 张，自动识别双方发言与潜台词）">
+          <div class="upload-shot-row">
+            <div v-for="(imgUrl, i) in replyImages" :key="i" class="shot-thumb-box">
+              <img :src="imgUrl" class="shot-thumb-img" alt="聊天截图预览" />
+              <button type="button" class="shot-del-btn" @click="removeReplyImage(i)">×</button>
+            </div>
+            <button
+              v-if="replyImages.length < 3"
+              type="button"
+              class="shot-add-btn"
+              @click="replyFileInputRef?.click()"
+            >
+              <span>＋ 上传截图</span>
+              <small>{{ replyImages.length }}/3</small>
+            </button>
+            <input
+              ref="replyFileInputRef"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              multiple
+              style="display: none"
+              @change="handleReplyImageChange"
+            />
+          </div>
+          <div class="vision-status-hint">
+            {{
+              replyPresets.has_vision_model
+                ? `👁️ 已就绪识图引擎：${replyPresets.vision_model_label}`
+                : '💡 上传截图需先在「AI 模型配置」启用通义千问 qwen-vl-plus 或豆包 Vision（未填 Key 时为演示模式）'
+            }}
+          </div>
+        </el-form-item>
+
+        <el-form-item label="粘贴对方发来的原话 / 补充说明（上传截图时可选）">
           <el-input
             v-model="replyForm.partner_message"
             type="textarea"
@@ -1355,6 +1741,115 @@ onBeforeUnmount(() => {
         </div>
       </template>
     </el-dialog>
+
+    <!-- 「先别发！」情绪降温与话术柔化弹窗 -->
+    <el-dialog
+      v-model="softenVisible"
+      title="🧊 先别发！情绪降温与话术柔化器"
+      width="560px"
+      destroy-on-close
+    >
+      <el-form label-position="top">
+        <el-form-item label="把气头上/委屈时打好的草稿贴进来" required>
+          <el-input
+            v-model="softenForm.draft_message"
+            type="textarea"
+            :rows="3"
+            maxlength="2000"
+            show-word-limit
+            placeholder="例如：算了随便你吧，反正你从来也不在乎我的感受"
+          />
+        </el-form-item>
+
+        <el-form-item label="此刻你的情绪温度">
+          <div class="tone-grid">
+            <button
+              v-for="lv in softenIntensities"
+              :key="lv.code"
+              type="button"
+              class="tone-card"
+              :class="{ 'is-active': softenForm.intensity === lv.code }"
+              @click="softenForm.intensity = lv.code"
+            >
+              <span class="tone-name">{{ lv.label }}</span>
+              <span class="tone-desc">{{ lv.desc }}</span>
+            </button>
+          </div>
+        </el-form-item>
+
+        <el-form-item label="前情原因（可选）">
+          <el-input
+            v-model="softenForm.context"
+            maxlength="800"
+            placeholder="例如：约定好一起吃晚饭，对方临时放鸽子还没道歉"
+            clearable
+          />
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <div class="reply-dialog-footer">
+          <span class="reply-dialog-hint">🌿 帮你既不委屈自己、又不把关系推向对抗</span>
+          <div>
+            <el-button @click="softenVisible = false">取消</el-button>
+            <el-button type="primary" :loading="sending" @click="handleSubmitSoftenDraft">
+              降温改写为 3 个版本
+            </el-button>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
+
+    <!-- 高情商话术收藏夹抽屉 -->
+    <el-drawer v-model="favoritesDrawerVisible" title="⭐ 高情商话术收藏夹" size="440px">
+      <div class="plaza-cats" style="margin-bottom: 12px">
+        <button
+          v-for="cat in [
+            { k: 'all', l: '全部' },
+            { k: 'reply_helper', l: '回消息' },
+            { k: 'soften', l: '先别发' },
+            { k: 'chat', l: '对话' },
+            { k: 'custom', l: '自定义' },
+          ]"
+          :key="cat.k"
+          type="button"
+          class="persona-chip"
+          :class="{ 'is-active': favoriteFilter === cat.k }"
+          @click="favoriteFilter = cat.k; void loadFavorites()"
+        >
+          {{ cat.l }}
+        </button>
+      </div>
+
+      <div class="fav-add-box">
+        <el-input
+          v-model="newFavContent"
+          type="textarea"
+          :rows="2"
+          placeholder="手动存入一句高情商话术/破冰金句..."
+          maxlength="1200"
+        />
+        <div class="fav-add-row">
+          <el-input v-model="newFavNote" size="small" placeholder="适用备注（可选）" clearable />
+          <el-button size="small" type="primary" plain @click="handleAddManualFavorite">保存</el-button>
+        </div>
+      </div>
+
+      <div v-loading="favoritesLoading" class="fav-list">
+        <el-empty v-if="favoriteItems.length === 0" description="暂无收藏话术，可在对话或工具结果中点击「⭐ 收藏」" />
+        <div v-for="fav in favoriteItems" :key="fav.id" class="fav-card">
+          <div class="fav-head">
+            <el-tag size="small" effect="plain">{{ fav.scene_label || fav.category }}</el-tag>
+            <div>
+              <el-button link size="small" type="primary" @click="copyText(fav.content)">复制</el-button>
+              <el-button link size="small" type="danger" @click="handleDeleteFavorite(fav.id)">删除</el-button>
+            </div>
+          </div>
+          <div class="fav-content">{{ fav.content }}</div>
+          <div v-if="fav.note" class="fav-note">备注：{{ fav.note }}</div>
+        </div>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -2112,6 +2607,130 @@ onBeforeUnmount(() => {
 }
 
 .reply-dialog-hint {
+  font-size: 12px;
+  color: var(--ailove-ink-muted);
+}
+
+.history-foot-ops {
+  display: flex;
+  gap: 8px;
+  padding-top: 10px;
+  margin-top: 8px;
+  border-top: 1px solid var(--ailove-border);
+}
+
+.incognito-banner {
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+  font-size: 12.5px;
+  margin-bottom: 10px;
+}
+
+.upload-shot-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.shot-thumb-box {
+  position: relative;
+  width: 78px;
+  height: 78px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--ailove-border);
+}
+
+.shot-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.shot-del-btn {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.shot-add-btn {
+  width: 78px;
+  height: 78px;
+  border-radius: 10px;
+  border: 1px dashed var(--ailove-brand-400);
+  background: var(--ailove-brand-50);
+  color: var(--ailove-brand-600);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.vision-status-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--ailove-ink-muted);
+}
+
+.fav-add-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--ailove-subtle);
+  border: 1px solid var(--ailove-border);
+}
+
+.fav-add-row {
+  display: flex;
+  gap: 8px;
+}
+
+.fav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.fav-card {
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--ailove-border);
+  background: #fff;
+}
+
+.fav-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.fav-content {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ailove-ink-primary);
+  white-space: pre-wrap;
+}
+
+.fav-note {
+  margin-top: 6px;
   font-size: 12px;
   color: var(--ailove-ink-muted);
 }

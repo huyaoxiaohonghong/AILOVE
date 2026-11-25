@@ -15,6 +15,7 @@ class ModelPreset:
     description: str
     context_window: int
     supports_reasoning: bool = False
+    supports_vision: bool = False
     supports_temperature: bool = True
     default_max_tokens: int = 4096
 
@@ -52,6 +53,7 @@ class ProviderDescriptor:
                     "description": m.description,
                     "context_window": m.context_window,
                     "supports_reasoning": m.supports_reasoning,
+                    "supports_vision": m.supports_vision,
                     "supports_temperature": m.supports_temperature,
                     "default_max_tokens": m.default_max_tokens,
                 }
@@ -135,6 +137,15 @@ class BaseProviderAdapter:
             if preset.id.lower() == clean:
                 return preset.supports_reasoning
         return clean in {"deepseek-v4-pro", "deepseek-reasoner"}
+
+    def supports_vision_model(self, model_name: str) -> bool:
+        clean = (model_name or "").strip().lower()
+        for preset in self.descriptor.models:
+            if preset.id.lower() == clean:
+                return preset.supports_vision
+        return any(
+            kw in clean for kw in ("-vl", "vision", "gpt-4o", "claude-3", "claude-4", "gemini")
+        )
 
     def build_chat_model(
         self,
@@ -368,6 +379,26 @@ class QwenProviderAdapter(OpenAICompatibleProviderAdapter):
                 supports_temperature=True,
                 default_max_tokens=4096,
             ),
+            ModelPreset(
+                id="qwen-vl-plus",
+                label="通义千问 VL Plus (qwen-vl-plus)",
+                description="支持微信聊天截图识图拆解，自动读取对话气泡与语气潜台词。",
+                context_window=32768,
+                supports_reasoning=False,
+                supports_vision=True,
+                supports_temperature=True,
+                default_max_tokens=4096,
+            ),
+            ModelPreset(
+                id="qwen-vl-max",
+                label="通义千问 VL Max (qwen-vl-max)",
+                description="高精度多模态视觉模型，精准识别复杂长图、时间间隔与表情细节。",
+                context_window=32768,
+                supports_reasoning=False,
+                supports_vision=True,
+                supports_temperature=True,
+                default_max_tokens=4096,
+            ),
         ),
     )
 
@@ -407,6 +438,16 @@ class DoubaoProviderAdapter(OpenAICompatibleProviderAdapter):
                 supports_temperature=True,
                 default_max_tokens=4096,
             ),
+            ModelPreset(
+                id="doubao-1-5-vision-pro-32k-250115",
+                label="豆包 1.5 Vision Pro (doubao-1-5-vision-pro-32k-250115)",
+                description="视觉多模态版本，支持识别微信聊天截图并给出拟人化高情商回复。",
+                context_window=32768,
+                supports_reasoning=False,
+                supports_vision=True,
+                supports_temperature=True,
+                default_max_tokens=4096,
+            ),
         ),
     )
 
@@ -443,6 +484,16 @@ class MoonshotProviderAdapter(OpenAICompatibleProviderAdapter):
                 description="长上下文窗口，轻松吃下大段微信聊天记录并深度还原前因后果。",
                 context_window=32768,
                 supports_reasoning=False,
+                supports_temperature=True,
+                default_max_tokens=4096,
+            ),
+            ModelPreset(
+                id="moonshot-v1-8k-vision-preview",
+                label="Kimi 8K Vision (moonshot-v1-8k-vision-preview)",
+                description="支持视觉识图能力，可配合聊天截图进行中文语境拆解。",
+                context_window=8192,
+                supports_reasoning=False,
+                supports_vision=True,
                 supports_temperature=True,
                 default_max_tokens=4096,
             ),

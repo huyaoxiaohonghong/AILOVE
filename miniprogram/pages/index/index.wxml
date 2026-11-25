@@ -45,17 +45,51 @@
     <text class="error-retry" bindtap="bootstrapHome">重试</text>
   </view>
 
-  <!-- 两大核心高频工具卡片 -->
+  <!-- 小圈子邀请码未激活提示卡 -->
+  <view wx:if="{{inviteLocked}}" class="card invite-lock-card">
+    <view class="invite-lock-title">🔐 小圈子内测激活</view>
+    <view class="invite-lock-desc">
+      本项目当前仅限熟人与受邀体验，请输入邀请码（如 LOVE-XXXXXX）后即可解锁全部情感导师与工具。
+    </view>
+    <view class="invite-input-row">
+      <input
+        class="invite-input"
+        placeholder="输入内测邀请码"
+        value="{{inviteInput}}"
+        maxlength="32"
+        bindinput="onInviteInput"
+      />
+      <button
+        class="primary-btn invite-btn"
+        loading="{{verifyingInvite}}"
+        bindtap="handleVerifyInvite"
+      >
+        解锁
+      </button>
+    </view>
+  </view>
+
+  <!-- 四大核心高频工具卡片（2×2 矩阵） -->
   <view class="tool-grid">
     <view class="tool-card tool-rose" bindtap="goReplyHelper">
       <view class="tool-emoji">💬</view>
-      <view class="tool-title">帮我回消息</view>
-      <view class="tool-desc">粘贴 TA 的原话，秒拆潜台词 + 3 条可复制高情商回复</view>
+      <view class="tool-title">帮我回消息 2.0</view>
+      <view class="tool-desc">粘贴原话或上传微信截图，秒拆潜台词 + 3 条回复</view>
+    </view>
+    <view class="tool-card tool-ice" bindtap="goSoftenDraft">
+      <view class="tool-emoji">🧊</view>
+      <view class="tool-title">先别发 · 柔化器</view>
+      <view class="tool-desc">气头上先降温，把带刺狠话改写成体面表达</view>
     </view>
     <view class="tool-card tool-blush" bindtap="goLoveProfile">
       <view class="tool-emoji">💞</view>
       <view class="tool-title">我的情感档案</view>
-      <view class="tool-desc">记录恋爱阶段、对方性格与雷区，每次咨询都贴合处境</view>
+      <view class="tool-desc">记录恋爱阶段与雷区，每次咨询不用重复交代</view>
+    </view>
+    <view class="tool-card tool-gold" bindtap="goFavorites">
+      <view class="tool-emoji">⭐</view>
+      <view class="tool-title">高情商话术库</view>
+      <view class="tool-desc">珍藏救场金句、升温开场白，随手复制发送</view>
     </view>
   </view>
 

@@ -352,6 +352,11 @@ async def register_user_by_email(
             status_code=status.HTTP_403_FORBIDDEN,
         )
 
+    if await sys_config_service.get_bool("registration.invite_code_required", default=False):
+        from app.services import invite_code_service  # noqa: PLC0415
+
+        await invite_code_service.verify_invite_code_only(req.invite_code)
+
     email_verify_required = await sys_config_service.get_bool(
         "registration.email_verify_required", default=False
     )
@@ -405,6 +410,11 @@ async def register_user_by_email(
                     scene="register",
                     submitted_code=req.email_code,
                 )
+
+            if await sys_config_service.get_bool("registration.invite_code_required", default=False):
+                from app.services import invite_code_service  # noqa: PLC0415
+
+                await invite_code_service.verify_and_consume_invite_code(req.invite_code)
 
             user = User(
                 username=None,
@@ -468,6 +478,11 @@ async def register_user_by_email(
                 scene="register",
                 submitted_code=req.email_code,
             )
+
+        if await sys_config_service.get_bool("registration.invite_code_required", default=False):
+            from app.services import invite_code_service  # noqa: PLC0415
+
+            await invite_code_service.verify_and_consume_invite_code(req.invite_code)
 
         global _dev_fallback_seq
         _dev_fallback_seq += 1
@@ -1252,13 +1267,26 @@ async def login_wechat_user(req: WxLoginRequest) -> WxLoginResponse:
     now = datetime.now(UTC).replace(tzinfo=None)
     nickname = req.nickname or f"微信用户_{openid[-4:]}"
     avatar_url = req.avatar_url or ""
+    invite_required = await sys_config_service.get_bool(
+        "registration.invite_code_required", default=False
+    )
 
+    verified_by_code = False
+    if req.invite_code and req.invite_code.strip():
+        from app.services import invite_code_service  # noqa: PLC0415
+
+        await invite_code_service.verify_and_consume_invite_code(req.invite_code)
+        verified_by_code = True
+
+    default_verified = (not invite_required) or verified_by_code
     user_profile = MiniappUserProfile(
         id=0,
         openid=openid,
         nickname=nickname,
         avatar_url=avatar_url,
         status=1,
+        invite_verified=default_verified,
+        invite_required=invite_required,
     )
 
     try:
@@ -1273,6 +1301,7 @@ async def login_wechat_user(req: WxLoginRequest) -> WxLoginResponse:
                     nickname=nickname,
                     avatar_url=avatar_url,
                     status=1,
+                    invite_verified=default_verified,
                     last_login_at=now,
                 )
                 session.add(user)
@@ -1290,6 +1319,8 @@ async def login_wechat_user(req: WxLoginRequest) -> WxLoginResponse:
                     user.avatar_url = req.avatar_url
                 if unionid and not user.unionid:
                     user.unionid = unionid
+                if verified_by_code and not user.invite_verified:
+                    user.invite_verified = True
                 user.last_login_at = now
 
             await session.commit()
@@ -1300,6 +1331,8 @@ async def login_wechat_user(req: WxLoginRequest) -> WxLoginResponse:
                 avatar_url=user.avatar_url,
                 phone=user.phone,
                 status=user.status,
+                invite_verified=bool(user.invite_verified) if invite_required else True,
+                invite_required=invite_required,
             )
     except BusinessException:
         raise
@@ -1313,6 +1346,7 @@ async def login_wechat_user(req: WxLoginRequest) -> WxLoginResponse:
             "openid": user_profile.openid,
             "nickname": user_profile.nickname,
             "avatar_url": user_profile.avatar_url,
+            "invite_verified": user_profile.invite_verified,
         },
     )
     return WxLoginResponse(

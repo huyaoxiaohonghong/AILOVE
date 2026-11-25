@@ -90,6 +90,7 @@ const emailCheckResult = ref<EmailAnalysisResult | null>(null)
 const registerForm = reactive({
   email: '',
   email_code: '',
+  invite_code: '',
   nickname: '',
   password: '',
   confirmPassword: '',
@@ -102,6 +103,9 @@ const registerRules = computed<FormRules>(() => ({
         { required: true, message: '请输入 6 位邮箱验证码', trigger: 'blur' },
         { pattern: /^\d{6}$/, message: '验证码应为 6 位数字', trigger: 'blur' },
       ]
+    : [],
+  invite_code: publicCfg.value.invite_code_required
+    ? [{ required: true, message: '请输入小圈子邀请码', trigger: 'blur' }]
     : [],
   password: [
     { required: true, message: '请设置登录密码', trigger: 'blur' },
@@ -249,6 +253,7 @@ async function submitAuthWithToken(scene: CaptchaScene, captchaToken: string) {
         nickname: registerForm.nickname.trim() || undefined,
         captcha_token: captchaToken,
         email_code: registerForm.email_code.trim() || undefined,
+        invite_code: registerForm.invite_code.trim() || undefined,
       })
       captchaDialogVisible.value = false
       ElMessage.success(`注册成功，欢迎加入 ${publicCfg.value.site_name || 'AILOVE'}，${res.user.nickname}`)
@@ -635,6 +640,16 @@ function fillDefaultAdmin() {
                 </el-button>
               </template>
             </el-input>
+          </el-form-item>
+
+          <el-form-item v-if="publicCfg.invite_code_required" label="小圈子邀请码" prop="invite_code">
+            <el-input
+              v-model="registerForm.invite_code"
+              placeholder="请输入内测邀请码（如 LOVE-XXXXXX）"
+              prefix-icon="Key"
+              maxlength="32"
+              clearable
+            />
           </el-form-item>
 
           <el-form-item label="显示昵称（可选）" prop="nickname">

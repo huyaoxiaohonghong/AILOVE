@@ -4,6 +4,8 @@
     "pages/chat/chat",
     "pages/profile/profile",
     "pages/reply-helper/reply-helper",
+    "pages/soften-draft/soften-draft",
+    "pages/favorites/favorites",
     "pages/love-profile/love-profile"
   ],
   "window": {

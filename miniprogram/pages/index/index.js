@@ -16,6 +16,9 @@ Page({
     loading: true,
     errorMsg: '',
     userInfo: null,
+    inviteLocked: false,
+    inviteInput: '',
+    verifyingInvite: false,
     announcement: '',
     loveProfile: null,
     quotaText: '',
@@ -88,8 +91,9 @@ Page({
 
   async refreshDynamicCards() {
     try {
-      const [pubCfg, personasRes, loveRes, convRes, quotaRes] = await Promise.all([
+      const [pubCfg, meProfile, personasRes, loveRes, convRes, quotaRes] = await Promise.all([
         api.getPublicConfig().catch(() => null),
+        api.getUserProfile().catch(() => null),
         api.getPersonas().catch(() => ({ items: [] })),
         api.getLoveProfile().catch(() => null),
         api.getConversations().catch(() => ({ items: [] })),
@@ -98,6 +102,13 @@ Page({
 
       const allPersonas = (personasRes && personasRes.items) || []
       const recent = ((convRes && convRes.items) || []).slice(0, 3)
+      const inviteRequired = Boolean(
+        (pubCfg && pubCfg.invite_code_required) || (meProfile && meProfile.invite_required)
+      )
+      const inviteVerified = meProfile ? Boolean(meProfile.invite_verified) : true
+      if (meProfile) {
+        auth.saveSession(auth.getToken(), meProfile)
+      }
       let quotaText = ''
       if (quotaRes) {
         if (quotaRes.is_exempt) {
@@ -109,6 +120,8 @@ Page({
 
       this.setData({
         errorMsg: '',
+        userInfo: meProfile || this.data.userInfo,
+        inviteLocked: inviteRequired && !inviteVerified,
         announcement: (pubCfg && pubCfg.announcement) || '',
         allPersonas,
         loveProfile: loveRes && loveRes.profile ? loveRes.profile : null,
@@ -141,8 +154,40 @@ Page({
     wx.navigateTo({ url: '/pages/reply-helper/reply-helper' })
   },
 
+  goSoftenDraft() {
+    wx.navigateTo({ url: '/pages/soften-draft/soften-draft' })
+  },
+
+  goFavorites() {
+    wx.navigateTo({ url: '/pages/favorites/favorites' })
+  },
+
   goLoveProfile() {
     wx.navigateTo({ url: '/pages/love-profile/love-profile' })
+  },
+
+  onInviteInput(e) {
+    this.setData({ inviteInput: e.detail.value })
+  },
+
+  async handleVerifyInvite() {
+    const code = (this.data.inviteInput || '').trim()
+    if (!code) {
+      wx.showToast({ title: '请输入内测邀请码', icon: 'none' })
+      return
+    }
+    if (this.data.verifyingInvite) return
+    this.setData({ verifyingInvite: true })
+    try {
+      const updated = await api.verifyInviteCode(code)
+      auth.saveSession(auth.getToken(), updated)
+      this.setData({ inviteLocked: false, inviteInput: '', userInfo: updated })
+      wx.showToast({ title: '激活成功，欢迎加入', icon: 'success' })
+    } catch (err) {
+      wx.showToast({ title: (err && err.message) || '邀请码无效', icon: 'none' })
+    } finally {
+      this.setData({ verifyingInvite: false })
+    }
   },
 
   goFreeChat() {

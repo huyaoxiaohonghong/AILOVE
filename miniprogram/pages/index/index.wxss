@@ -180,8 +180,61 @@
   background: linear-gradient(180deg, #fff5f7 0%, #ffffff 100%);
 }
 
+.tool-ice {
+  background: linear-gradient(180deg, #f0f9ff 0%, #ffffff 100%);
+}
+
 .tool-blush {
   background: linear-gradient(180deg, #fff8f2 0%, #ffffff 100%);
+}
+
+.tool-gold {
+  background: linear-gradient(180deg, #fefce8 0%, #ffffff 100%);
+}
+
+.invite-lock-card {
+  margin-bottom: 24rpx;
+  border: 1rpx solid #f5c2cd;
+  background: linear-gradient(135deg, #fff7f9 0%, #ffffff 100%);
+}
+
+.invite-lock-title {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #a92442;
+  margin-bottom: 8rpx;
+}
+
+.invite-lock-desc {
+  font-size: 23rpx;
+  color: #6b5f70;
+  line-height: 1.55;
+  margin-bottom: 18rpx;
+}
+
+.invite-input-row {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+}
+
+.invite-input {
+  flex: 1;
+  height: 76rpx;
+  padding: 0 22rpx;
+  border-radius: 16rpx;
+  background: #ffffff;
+  border: 1rpx solid #efd9e0;
+  font-size: 27rpx;
+}
+
+.invite-btn {
+  width: 148rpx;
+  height: 76rpx;
+  line-height: 76rpx;
+  font-size: 27rpx;
+  margin: 0;
+  padding: 0;
 }
 
 .tool-emoji {

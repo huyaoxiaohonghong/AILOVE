@@ -24,6 +24,7 @@ Page({
     quotaText: '',
     inputValue: '',
     sending: false,
+    incognitoMode: false,
     scrollTop: 0,
     scrollToId: '',
     messages: [WELCOME_BUBBLE],
@@ -225,6 +226,9 @@ Page({
 
   async loadSessionById(sessionId) {
     this.stopStreamSilently()
+    if (this.data.incognitoMode) {
+      this.setData({ incognitoMode: false })
+    }
     this.setData({ loadingHistory: true })
     try {
       const detail = await api.getConversationMessages(sessionId)
@@ -294,6 +298,22 @@ Page({
 
   goReplyHelper() {
     wx.navigateTo({ url: '/pages/reply-helper/reply-helper' })
+  },
+
+  goSoftenDraft() {
+    wx.navigateTo({ url: '/pages/soften-draft/soften-draft' })
+  },
+
+  onToggleIncognito() {
+    if (this.data.sending) return
+    const next = !this.data.incognitoMode
+    this.setData({ incognitoMode: next })
+    if (next) {
+      this.resetToNewChat(this.data.selectedPersonaId)
+      wx.showToast({ title: '已开启无痕倾诉，本轮不存记录', icon: 'none' })
+    } else {
+      wx.showToast({ title: '已退出无痕模式', icon: 'none' })
+    }
   },
 
   onInputChange(e) {
@@ -404,11 +424,21 @@ Page({
 
     try {
       await auth.ensureLogin()
+      const isIncognito = Boolean(this.data.incognitoMode)
+      const ephemeralHistory = isIncognito
+        ? this.data.messages
+            .slice(1, -2)
+            .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content && !m.isError)
+            .slice(-12)
+            .map((m) => ({ role: m.role, content: m.content }))
+        : undefined
       const payload = {
         message: content,
         session_id: this.data.sessionId || undefined,
         persona_id: this.data.selectedPersonaId || undefined,
         timezone: 'Asia/Shanghai',
+        incognito: isIncognito,
+        ephemeral_history: ephemeralHistory,
       }
 
       const handle = api.streamAiChat(payload, {
@@ -487,6 +517,25 @@ Page({
         wx.showToast({ title: '已复制到剪贴板', icon: 'success' })
       },
     })
+  },
+
+  async onFavoriteMessage(e) {
+    const txt = (e.currentTarget.dataset.content || '').trim()
+    const label = (e.currentTarget.dataset.label || '').trim() || 'AI 咨询'
+    if (!txt) return
+    try {
+      const res = await api.saveFavorite({
+        content: txt.slice(0, 1200),
+        category: 'chat',
+        scene_label: label.slice(0, 64),
+      })
+      wx.showToast({
+        title: res && res.deduplicated ? '已在收藏夹中' : '已收藏到话术库',
+        icon: 'success',
+      })
+    } catch (err) {
+      wx.showToast({ title: (err && err.message) || '收藏失败', icon: 'none' })
+    }
   },
 
   onTapHotline(e) {

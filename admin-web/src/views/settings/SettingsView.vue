@@ -2,13 +2,18 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from '@/plugins/element-plus'
 import {
+  createInviteCode,
+  deleteInviteCode,
   fetchHealth,
+  fetchInviteCodes,
   fetchSystemConfigs,
   resetSystemConfigs,
   sendAlertWebhookTest,
   sendSmtpTestEmail,
+  toggleInviteCode,
   updateSystemConfigs,
   type HealthData,
+  type InviteCodeItem,
   type SysConfigGroup,
 } from '@/api/system'
 import { useAppStore } from '@/stores/app'
@@ -27,6 +32,14 @@ const smtpTestEmail = ref('')
 const smtpTesting = ref(false)
 const alertTestMessage = ref('')
 const alertTesting = ref(false)
+const inviteCodes = ref<InviteCodeItem[]>([])
+const inviteLoading = ref(false)
+const inviteCreating = ref(false)
+const inviteForm = reactive<{ note: string; max_uses: number; expires_days: number | undefined }>({
+  note: '',
+  max_uses: 1,
+  expires_days: undefined,
+})
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 const appTitle = import.meta.env.VITE_APP_TITLE || 'AILOVE 管理后台'
@@ -40,6 +53,64 @@ function syncDraftFromGroups(nextGroups: SysConfigGroup[]) {
   }
 }
 
+async function loadInviteCodes() {
+  inviteLoading.value = true
+  try {
+    const res = await fetchInviteCodes()
+    inviteCodes.value = res.items
+  } catch {
+    // 忽略
+  } finally {
+    inviteLoading.value = false
+  }
+}
+
+async function handleCreateInviteCode() {
+  inviteCreating.value = true
+  try {
+    const created = await createInviteCode({
+      note: inviteForm.note.trim(),
+      max_uses: inviteForm.max_uses,
+      expires_days: inviteForm.expires_days || null,
+    })
+    inviteForm.note = ''
+    ElMessage.success(`已生成邀请码：${created.code}`)
+    await loadInviteCodes()
+  } finally {
+    inviteCreating.value = false
+  }
+}
+
+async function handleToggleInvite(row: InviteCodeItem) {
+  await toggleInviteCode(row.id, !row.is_active)
+  ElMessage.success(!row.is_active ? `已启用 ${row.code}` : `已停用 ${row.code}`)
+  await loadInviteCodes()
+}
+
+async function handleDeleteInvite(row: InviteCodeItem) {
+  try {
+    await ElMessageBox.confirm(`确认删除邀请码「${row.code}」？`, '删除确认', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+    await deleteInviteCode(row.id)
+    ElMessage.success('邀请码已删除')
+    await loadInviteCodes()
+  } catch {
+    // 取消
+  }
+}
+
+async function copyInviteCode(code: string) {
+  try {
+    await navigator.clipboard.writeText(code)
+    ElMessage.success(`已复制邀请码 ${code}`)
+  } catch {
+    ElMessage.warning('请手动选中复制')
+  }
+}
+
 async function loadAll() {
   loading.value = true
   try {
@@ -47,6 +118,7 @@ async function loadAll() {
     groups.value = cfgRes.groups
     syncDraftFromGroups(cfgRes.groups)
     health.value = healthRes
+    void loadInviteCodes()
   } finally {
     loading.value = false
   }
@@ -248,6 +320,75 @@ onMounted(() => {
                 </template>
               </div>
             </div>
+          </div>
+
+          <div v-if="group.group === 'registration' && canManage" class="invite-panel">
+            <div class="smtp-test-box" style="margin-top: 0">
+              <div class="smtp-test-info">
+                <strong>小圈子内测邀请码管理</strong>
+                <span>开启上方「小圈子邀请码准入」开关并保存后，新用户须凭此邀请码才可注册或解锁小程序。</span>
+              </div>
+              <div class="smtp-test-actions" style="flex-wrap: wrap">
+                <el-input
+                  v-model="inviteForm.note"
+                  placeholder="备注（如：闺蜜小雪 / 好友群）"
+                  clearable
+                  style="width: 190px"
+                />
+                <el-input-number
+                  v-model="inviteForm.max_uses"
+                  :min="0"
+                  :max="1000"
+                  controls-position="right"
+                  style="width: 110px"
+                />
+                <span class="invite-unit">次 (0=无限)</span>
+                <el-button type="primary" plain :loading="inviteCreating" @click="handleCreateInviteCode">
+                  生成邀请码
+                </el-button>
+              </div>
+            </div>
+
+            <el-table
+              v-loading="inviteLoading"
+              :data="inviteCodes"
+              size="small"
+              style="margin-top: 12px"
+              empty-text="暂无邀请码，点击右上角即可生成专属邀请码"
+            >
+              <el-table-column label="邀请码" min-width="140">
+                <template #default="{ row }">
+                  <el-button link type="primary" class="mono-num" @click="copyInviteCode(row.code)">
+                    {{ row.code }}
+                  </el-button>
+                </template>
+              </el-table-column>
+              <el-table-column prop="note" label="备注" min-width="140" show-overflow-tooltip />
+              <el-table-column label="核销进度" width="110">
+                <template #default="{ row }">
+                  <span class="mono-num">
+                    {{ row.used_count }} / {{ row.max_uses === 0 ? '∞' : row.max_uses }}
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }">
+                  <el-tag :type="row.is_available ? 'success' : 'info'" size="small">
+                    {{ row.is_available ? '可用' : row.is_active ? '已用完' : '已停用' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="130" align="right">
+                <template #default="{ row }">
+                  <el-button link size="small" type="primary" @click="handleToggleInvite(row)">
+                    {{ row.is_active ? '停用' : '启用' }}
+                  </el-button>
+                  <el-button link size="small" type="danger" @click="handleDeleteInvite(row)">
+                    删除
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
           </div>
 
           <div v-if="group.group === 'email' && canManage" class="smtp-test-box">
@@ -453,5 +594,14 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.invite-panel {
+  margin-top: 16px;
+}
+
+.invite-unit {
+  font-size: 12px;
+  color: var(--ailove-ink-muted);
 }
 </style>

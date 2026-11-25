@@ -10,6 +10,7 @@ export interface AIModelPreset {
   description: string
   context_window: number
   supports_reasoning: boolean
+  supports_vision?: boolean
   supports_temperature: boolean
   default_max_tokens: number
 }
@@ -72,6 +73,7 @@ export interface AvailableAIModel {
   is_default: boolean
   has_api_key: boolean
   supports_reasoning: boolean
+  supports_vision?: boolean
   last_test_status: string
 }
 
@@ -96,6 +98,8 @@ export interface AiChatPayload {
   temperature?: number
   timezone?: string
   use_love_profile?: boolean
+  incognito?: boolean
+  ephemeral_history?: Array<{ role: 'user' | 'assistant'; content: string }>
 }
 
 export interface AiChatResult {
@@ -110,6 +114,7 @@ export interface AiChatResult {
   persona_id?: number | null
   persona_name?: string
   is_mock: boolean
+  incognito?: boolean
   history_length: number
   token_usage: number
   love_profile_injected?: boolean
@@ -169,7 +174,8 @@ export type ReplyHelperScene =
 export type ReplyHelperTone = 'playful' | 'gentle' | 'graceful' | 'sincere' | 'humorous'
 
 export interface ReplyHelperPayload {
-  partner_message: string
+  partner_message?: string
+  images?: string[]
   scene: ReplyHelperScene
   tone: ReplyHelperTone
   context?: string
@@ -179,11 +185,39 @@ export interface ReplyHelperPayload {
   persona_id?: number
   timezone?: string
   use_love_profile?: boolean
+  incognito?: boolean
 }
 
 export interface ReplyHelperPresets {
   scenes: Array<{ code: ReplyHelperScene; label: string; desc: string }>
   tones: Array<{ code: ReplyHelperTone; label: string; desc: string }>
+  has_vision_model?: boolean
+  vision_model_label?: string
+}
+
+export type SoftenIntensity = 'mild' | 'medium' | 'heated'
+
+export interface SoftenDraftPayload {
+  draft_message: string
+  intensity: SoftenIntensity
+  context?: string
+  session_id?: string
+  config_id?: number
+  persona_id?: number
+  timezone?: string
+  use_love_profile?: boolean
+  incognito?: boolean
+}
+
+export type FavoriteCategory = 'reply_helper' | 'soften' | 'chat' | 'custom'
+
+export interface FavoriteReplyItem {
+  id: number
+  category: FavoriteCategory
+  scene_label: string
+  content: string
+  note: string
+  created_at: string
 }
 
 export type PersonaCategory = 'dating' | 'chat_coach' | 'relationship' | 'conflict' | 'healing'
@@ -486,6 +520,68 @@ export function sendReplyHelper(data: ReplyHelperPayload) {
   })
 }
 
+export function fetchSoftenDraftPresets() {
+  return request<{ intensities: Array<{ code: SoftenIntensity; label: string; desc: string }> }>({
+    url: '/ai/soften-draft/presets',
+    method: 'get',
+  })
+}
+
+export function sendSoftenDraft(data: SoftenDraftPayload) {
+  return request<AiChatResult>({
+    url: '/ai/soften-draft',
+    method: 'post',
+    data,
+  })
+}
+
+export function fetchFavoriteReplies(category?: string) {
+  return request<{ items: FavoriteReplyItem[]; total: number }>({
+    url: '/ai/favorites',
+    method: 'get',
+    params: category && category !== 'all' ? { category } : undefined,
+  })
+}
+
+export function createFavoriteReply(data: {
+  content: string
+  category: FavoriteCategory
+  scene_label?: string
+  note?: string
+}) {
+  return request<{ item: FavoriteReplyItem; deduplicated: boolean }>({
+    url: '/ai/favorites',
+    method: 'post',
+    data,
+  })
+}
+
+export function deleteFavoriteReply(favoriteId: number) {
+  return request<{ deleted_id: number }>({
+    url: `/ai/favorites/${favoriteId}`,
+    method: 'delete',
+  })
+}
+
+export function exportMyJournalFile() {
+  return downloadAuthenticatedCsv('/ai/my-data/export', { format: 'markdown' }, 'ailove_journal.md')
+}
+
+export function purgeMyAiData(includeLoveProfile = true, includeFavorites = true) {
+  return request<{
+    cleared_conversations: number
+    cleared_favorites: number
+    cleared_love_profile: boolean
+  }>({
+    url: '/ai/my-data',
+    method: 'delete',
+    params: {
+      include_love_profile: includeLoveProfile,
+      include_favorites: includeFavorites,
+    },
+  })
+}
+
 export function deleteAiConversation(sessionId: string) {
   return request<{ session_id: string; deleted: boolean }>({
     url: `/ai/conversations/${encodeURIComponent(sessionId)}`,
@@ -560,6 +656,7 @@ export interface StreamAiMeta {
   persona_id?: number | null
   persona_name?: string
   is_mock?: boolean
+  incognito?: boolean
   love_profile_injected?: boolean
   emotion_care?: EmotionCareNotice | null
   prompt_preview?: string
@@ -628,6 +725,7 @@ async function consumeAiSse(
       persona_id?: number | null
       persona_name?: string
       is_mock?: boolean
+      incognito?: boolean
       love_profile_injected?: boolean
       emotion_care?: EmotionCareNotice | null
       prompt_preview?: string
@@ -650,6 +748,7 @@ async function consumeAiSse(
         persona_id: payload.persona_id,
         persona_name: payload.persona_name,
         is_mock: payload.is_mock,
+        incognito: payload.incognito,
         love_profile_injected: payload.love_profile_injected,
         emotion_care: payload.emotion_care,
         prompt_preview: payload.prompt_preview,
@@ -700,4 +799,12 @@ export function streamReplyHelper(
   signal?: AbortSignal,
 ): Promise<void> {
   return consumeAiSse('/ai/reply-helper/stream', data, callbacks, signal)
+}
+
+export function streamSoftenDraft(
+  data: SoftenDraftPayload,
+  callbacks: StreamAiCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  return consumeAiSse('/ai/soften-draft/stream', data, callbacks, signal)
 }

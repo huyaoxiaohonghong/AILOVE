@@ -1,0 +1,58 @@
+<view class="container safe-bottom">
+  <view class="card add-box">
+    <view class="card-title">⭐ 存入我的高情商金句</view>
+    <textarea
+      class="fav-textarea"
+      placeholder="把随时想到的好话术、破冰句或哄人模板存下来..."
+      value="{{newContent}}"
+      maxlength="1200"
+      auto-height="true"
+      bindinput="onContentInput"
+    />
+    <view class="fav-add-foot">
+      <input
+        class="note-input"
+        placeholder="备注适用场景（可选）"
+        value="{{newNote}}"
+        maxlength="100"
+        bindinput="onNoteInput"
+      />
+      <button class="primary-btn add-btn" loading="{{saving}}" bindtap="handleAddCustom">存入</button>
+    </view>
+  </view>
+
+  <scroll-view class="cat-scroll" scroll-x="true" enable-flex="true">
+    <view class="cat-row">
+      <view
+        wx:for="{{categories}}"
+        wx:key="key"
+        class="cat-pill {{activeCategory === item.key ? 'cat-pill-active' : ''}}"
+        data-key="{{item.key}}"
+        bindtap="onSelectCategory"
+      >
+        {{item.label}}
+      </view>
+    </view>
+  </scroll-view>
+
+  <view wx:if="{{loading}}" class="empty-box">正在加载话术收藏夹...</view>
+  <view wx:elif="{{items.length === 0}}" class="empty-box">
+    暂无收藏话术，可在「帮我回消息」「先别发」「AI 咨询」中轻触 ⭐ 收藏
+  </view>
+
+  <view wx:else class="fav-list">
+    <view wx:for="{{items}}" wx:key="id" class="card fav-card">
+      <view class="fav-head">
+        <text class="fav-tag">{{item.scene_label || item.category}}</text>
+        <view class="fav-ops">
+          <text class="fav-copy" data-content="{{item.content}}" bindtap="onCopyItem">复制</text>
+          <text class="fav-del" data-id="{{item.id}}" bindtap="onDeleteItem">删</text>
+        </view>
+      </view>
+      <view class="fav-content" data-content="{{item.content}}" bindtap="onCopyItem">
+        <text user-select="true">{{item.content}}</text>
+      </view>
+      <view wx:if="{{item.note}}" class="fav-note">备注：{{item.note}}</view>
+    </view>
+  </view>
+</view>

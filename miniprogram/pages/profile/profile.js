@@ -19,12 +19,40 @@ Page({
     healthType: 'info',
     healthText: '未检测',
     healthModel: '-',
+    inviteLocked: false,
+    inviteInput: '',
+    verifyingInvite: false,
   },
 
   onShow() {
     this.syncEnvState()
     this.syncLocalUser()
     this.refreshDashboard()
+  },
+
+  onInviteInput(e) {
+    this.setData({ inviteInput: e.detail.value })
+  },
+
+  async handleVerifyInvite() {
+    const code = (this.data.inviteInput || '').trim()
+    if (!code) {
+      wx.showToast({ title: '请输入内测邀请码', icon: 'none' })
+      return
+    }
+    if (this.data.verifyingInvite) return
+    this.setData({ verifyingInvite: true })
+    try {
+      const updated = await api.verifyInviteCode(code)
+      auth.saveSession(auth.getToken(), updated)
+      this.syncLocalUser()
+      this.setData({ inviteLocked: false, inviteInput: '' })
+      wx.showToast({ title: '邀请码激活成功', icon: 'success' })
+    } catch (err) {
+      wx.showToast({ title: (err && err.message) || '邀请码无效', icon: 'none' })
+    } finally {
+      this.setData({ verifyingInvite: false })
+    }
   },
 
   onPullDownRefresh() {
@@ -51,7 +79,12 @@ Page({
       const oid = String(userInfo.openid)
       maskedOpenid = oid.length > 10 ? `${oid.slice(0, 6)}****${oid.slice(-4)}` : oid
     }
-    this.setData({ userInfo, avatarInitial, maskedOpenid })
+    this.setData({
+      userInfo,
+      avatarInitial,
+      maskedOpenid,
+      inviteLocked: Boolean(userInfo && userInfo.invite_required && !userInfo.invite_verified),
+    })
   },
 
   async refreshDashboard() {
@@ -165,10 +198,61 @@ Page({
     wx.navigateTo({ url: '/pages/reply-helper/reply-helper' })
   },
 
+  goSoftenDraft() {
+    wx.navigateTo({ url: '/pages/soften-draft/soften-draft' })
+  },
+
+  goFavorites() {
+    wx.navigateTo({ url: '/pages/favorites/favorites' })
+  },
+
   goHistoryChat() {
     const app = getApp()
     app.setChatIntent({ openHistory: true })
     wx.switchTab({ url: '/pages/chat/chat' })
+  },
+
+  async handleExportJournal() {
+    wx.showLoading({ title: '正在生成情感手账...' })
+    try {
+      const res = await api.exportMyJournalJson()
+      wx.hideLoading()
+      const md = (res && res.markdown) || ''
+      const stats = (res && res.stats) || {}
+      wx.setClipboardData({
+        data: md,
+        success() {
+          wx.showModal({
+            title: '私密情感手账已复制',
+            content: `已将 ${stats.conversation_count || 0} 个会话、${stats.favorite_count || 0} 条收藏话术整理为 Markdown 并写入剪贴板，可直接粘贴保存到备忘录或微信收藏。`,
+            showCancel: false,
+            confirmColor: '#c83553',
+          })
+        },
+      })
+    } catch (err) {
+      wx.hideLoading()
+      wx.showToast({ title: (err && err.message) || '导出失败', icon: 'none' })
+    }
+  },
+
+  handlePurgeAllData() {
+    wx.showModal({
+      title: '彻底清空个人云端数据',
+      content: '确认永久删除全部历史对话、情感档案记忆卡与话术收藏？删除后不可恢复。',
+      confirmText: '彻底清空',
+      confirmColor: '#dc2626',
+      success: async (res) => {
+        if (!res.confirm) return
+        try {
+          await api.purgeMyData()
+          this.setData({ loveProfile: null, conversationCount: 0 })
+          wx.showToast({ title: '云端私密数据已彻底清空', icon: 'success' })
+        } catch (err) {
+          wx.showToast({ title: (err && err.message) || '清除失败', icon: 'none' })
+        }
+      },
+    })
   },
 
   handleSwitchEnv() {

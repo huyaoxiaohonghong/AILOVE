@@ -8,7 +8,22 @@
 
   <view class="card">
     <view class="field-head">
-      <text class="field-label">对方发来的原话 / 聊天片段 *</text>
+      <text class="field-label">微信聊天截图识图（可选，最多 3 张）</text>
+      <text class="vision-badge">{{hasVisionModel ? '👁️ 识图已就绪' : '📸 支持识图/演示'}}</text>
+    </view>
+    <view class="shot-row">
+      <view wx:for="{{images}}" wx:key="*this" class="shot-box">
+        <image class="shot-img" src="{{item}}" mode="aspectFill" />
+        <view class="shot-del" data-idx="{{index}}" bindtap="onRemoveImage">×</view>
+      </view>
+      <view wx:if="{{images.length < 3}}" class="shot-add" bindtap="onChooseImages">
+        <text class="shot-add-plus">＋</text>
+        <text class="shot-add-txt">传聊天截图</text>
+      </view>
+    </view>
+
+    <view class="field-head" style="margin-top: 22rpx;">
+      <text class="field-label">对方发来的原话 / 聊天片段（传图时可选）</text>
       <text class="paste-btn" bindtap="onPasteClipboard">📋 一键粘贴</text>
     </view>
     <textarea
@@ -98,16 +113,13 @@
 
     <!-- 快捷可复制备选回复卡片 -->
     <view wx:if="{{suggestedReplies.length > 0}}" class="quick-replies">
-      <view class="quick-replies-title">✨ 可直接复制发送（轻触复制）</view>
-      <view
-        wx:for="{{suggestedReplies}}"
-        wx:key="*this"
-        class="reply-quote-card"
-        data-text="{{item}}"
-        bindtap="onCopyText"
-      >
-        <view class="reply-quote-txt">{{item}}</view>
-        <view class="reply-quote-copy">复制</view>
+      <view class="quick-replies-title">✨ 可直接复制或收藏（轻触即用）</view>
+      <view wx:for="{{suggestedReplies}}" wx:key="*this" class="reply-quote-card">
+        <view class="reply-quote-txt" data-text="{{item}}" bindtap="onCopyText">{{item}}</view>
+        <view class="quote-ops">
+          <text class="quote-fav" data-text="{{item}}" bindtap="onFavoriteText">⭐</text>
+          <text class="reply-quote-copy" data-text="{{item}}" bindtap="onCopyText">复制</text>
+        </view>
       </view>
     </view>
 

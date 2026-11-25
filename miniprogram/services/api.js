@@ -18,6 +18,14 @@ function updateUserProfile(payload) {
   return request({ url: '/miniapp/user/profile', method: 'PATCH', data: payload })
 }
 
+function verifyInviteCode(inviteCode) {
+  return request({
+    url: '/miniapp/user/verify-invite',
+    method: 'POST',
+    data: { invite_code: inviteCode },
+  })
+}
+
 // --- 恋爱智能体与配额 ---
 function getPersonas(category) {
   const qs = category && category !== 'all' ? `?category=${encodeURIComponent(category)}` : ''
@@ -83,6 +91,46 @@ function streamReplyHelper(payload, callbacks) {
   )
 }
 
+// --- 先别发！情绪降温与话术柔化 ---
+function getSoftenPresets() {
+  return request({ url: '/ai/soften-draft/presets', method: 'GET' })
+}
+
+function streamSoftenDraft(payload, callbacks) {
+  return streamSseRequest(
+    Object.assign({ url: '/ai/soften-draft/stream', data: payload }, callbacks)
+  )
+}
+
+// --- 高情商话术收藏夹 ---
+function getFavorites(category) {
+  const qs = category && category !== 'all' ? `?category=${encodeURIComponent(category)}` : ''
+  return request({ url: `/ai/favorites${qs}`, method: 'GET' })
+}
+
+function saveFavorite(payload) {
+  return request({ url: '/ai/favorites', method: 'POST', data: payload })
+}
+
+function deleteFavorite(favoriteId) {
+  return request({
+    url: `/ai/favorites/${encodeURIComponent(favoriteId)}`,
+    method: 'DELETE',
+  })
+}
+
+// --- 个人数据导出与销毁（数据主权） ---
+function exportMyJournalJson() {
+  return request({ url: '/ai/my-data/export?format=json', method: 'GET', timeout: 60000 })
+}
+
+function purgeMyData() {
+  return request({
+    url: '/ai/my-data?include_love_profile=true&include_favorites=true',
+    method: 'DELETE',
+  })
+}
+
 // --- AI 对话（同步 + 流式） ---
 function sendAiChat(payload) {
   return request({ url: '/ai/chat', method: 'POST', data: payload, timeout: 90000 })
@@ -106,6 +154,7 @@ module.exports = {
   getPublicConfig,
   getUserProfile,
   updateUserProfile,
+  verifyInviteCode,
   getPersonas,
   getMyQuota,
   getConversations,
@@ -118,6 +167,13 @@ module.exports = {
   getReplyHelperPresets,
   sendReplyHelper,
   streamReplyHelper,
+  getSoftenPresets,
+  streamSoftenDraft,
+  getFavorites,
+  saveFavorite,
+  deleteFavorite,
+  exportMyJournalJson,
+  purgeMyData,
   sendAiChat,
   streamAiChat,
   clearAiSession,

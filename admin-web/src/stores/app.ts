@@ -12,6 +12,7 @@ export const useAppStore = defineStore('app', () => {
     registration_enabled: true,
     slider_captcha_enabled: true,
     email_verify_required: false,
+    invite_code_required: false,
     email_service_enabled: false,
     password_min_length: 8,
     configs: {},
