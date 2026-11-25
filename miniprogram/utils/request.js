@@ -3,6 +3,8 @@ const env = require('../config/env')
 const TOKEN_KEY = 'ailove_wx_token'
 const USER_KEY = 'ailove_wx_user'
 
+let _reloginHandler = null
+
 function getToken() {
   return wx.getStorageSync(TOKEN_KEY) || ''
 }
@@ -12,8 +14,36 @@ function clearAuthStorage() {
   wx.removeStorageSync(USER_KEY)
 }
 
+function clearAuthState() {
+  clearAuthStorage()
+  try {
+    const app = getApp()
+    if (app && app.globalData) {
+      app.globalData.token = ''
+      app.globalData.userInfo = null
+    }
+  } catch (_e) {
+    // App 尚未初始化时忽略
+  }
+}
+
+function registerUnauthorizedRelogin(handler) {
+  _reloginHandler = typeof handler === 'function' ? handler : null
+}
+
+function trySilentRelogin() {
+  if (typeof _reloginHandler !== 'function') {
+    return Promise.resolve(false)
+  }
+  return Promise.resolve()
+    .then(() => _reloginHandler())
+    .then(() => Boolean(getToken()))
+    .catch(() => false)
+}
+
 /**
  * 统一封装 wx.request，自动注入 Authorization 并解包后端统一结构 { code, message, data }
+ * 若本地旧 Token 过期触发 401，将自动静默重登并无缝重试一次。
  */
 function request(options) {
   const {
@@ -23,6 +53,7 @@ function request(options) {
     header = {},
     needAuth = true,
     timeout = 60000,
+    _retried = false,
   } = options
 
   const token = getToken()
@@ -45,11 +76,18 @@ function request(options) {
         const body = res.data || {}
 
         if (statusCode === 401) {
-          clearAuthStorage()
-          const app = getApp()
-          if (app && app.globalData) {
-            app.globalData.token = ''
-            app.globalData.userInfo = null
+          clearAuthState()
+          if (needAuth && Boolean(token) && !_retried) {
+            trySilentRelogin().then((ok) => {
+              if (ok) {
+                request(Object.assign({}, options, { _retried: true }))
+                  .then(resolve)
+                  .catch(reject)
+              } else {
+                reject(new Error(body.message || '登录已过期，请重新登录'))
+              }
+            })
+            return
           }
           reject(new Error(body.message || '登录已过期，请重新登录'))
           return
@@ -73,6 +111,9 @@ module.exports = {
   request,
   getToken,
   clearAuthStorage,
+  clearAuthState,
+  registerUnauthorizedRelogin,
+  trySilentRelogin,
   TOKEN_KEY,
   USER_KEY,
 }

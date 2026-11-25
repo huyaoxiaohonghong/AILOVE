@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
+import ipaddress
 import logging
 import time
+from collections.abc import Coroutine
 from datetime import datetime
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -21,6 +24,9 @@ logger = logging.getLogger(__name__)
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 _SUPPORTED_PROVIDERS = frozenset({"wecom", "feishu", "dingtalk", "generic"})
 _mem_cooldowns: dict[str, float] = {}
+_background_tasks: set[asyncio.Task[Any]] = set()
+_BLOCKED_HOSTNAMES = frozenset({"localhost", "localhost.localdomain"})
+_BLOCKED_HOST_SUFFIXES = (".local", ".localhost", ".internal")
 
 
 def _now_str() -> str:
@@ -129,7 +135,44 @@ def _validate_webhook_url(url: str) -> str:
             "请先在「告警通知 Webhook」中填写有效的 http(s):// 机器人地址并保存",
             code=40061,
         )
+    parsed = urlparse(clean)
+    host = (parsed.hostname or "").strip().lower().rstrip(".")
+    if not host:
+        raise BusinessException("Webhook 地址缺少有效主机名", code=40061)
+    if host in _BLOCKED_HOSTNAMES or host.endswith(_BLOCKED_HOST_SUFFIXES):
+        raise BusinessException("不允许将 Webhook 指向本机或内网域名", code=40061)
+    try:
+        ip_obj = ipaddress.ip_address(host)
+    except ValueError:
+        if "." not in host:
+            raise BusinessException("不允许将 Webhook 指向容器/内网短主机名", code=40061) from None
+    else:
+        if (
+            ip_obj.is_loopback
+            or ip_obj.is_private
+            or ip_obj.is_link_local
+            or ip_obj.is_multicast
+            or ip_obj.is_reserved
+            or ip_obj.is_unspecified
+        ):
+            raise BusinessException("不允许将 Webhook 指向内网、回环或保留 IP 地址", code=40061)
     return clean
+
+
+def dispatch_alert_in_background(coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
+    """在后台任务中非阻塞派发告警，避免外部 Webhook 抖动阻塞登录或 AI 对话主链路。"""
+
+    async def _runner() -> Any:
+        try:
+            return await coro
+        except Exception as exc:  # pragma: no cover - 兜底防未捕获异常
+            logger.warning("Background alert dispatch failed: %s", exc)
+            return None
+
+    task = asyncio.create_task(_runner())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
 
 
 async def send_alert(
@@ -159,8 +202,13 @@ async def send_alert(
             _validate_webhook_url(webhook_url)
         return {"delivered": False, "skipped": "empty_url"}
 
-    if raise_on_error:
+    try:
         _validate_webhook_url(webhook_url)
+    except BusinessException:
+        if raise_on_error:
+            raise
+        logger.warning("Alert webhook skipped due to unsafe URL (%s)", provider)
+        return {"delivered": False, "skipped": "unsafe_url"}
 
     if not bypass_cooldown and dedup_key:
         cooldown = await sys_config_service.get_int("alert.cooldown_seconds", default=300)
@@ -180,7 +228,7 @@ async def send_alert(
 
     t0 = time.perf_counter()
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=False) as client:
             resp = await client.post(target_url, json=payload)
         latency_ms = max(1, int((time.perf_counter() - t0) * 1000))
         if resp.status_code >= 400:
@@ -293,6 +341,46 @@ async def notify_llm_alert(
             "config_name": config_name,
             "fallback_to": fallback_to,
         },
+    )
+
+
+def schedule_login_lockout_alert(
+    *,
+    account: str,
+    client_ip: str,
+    fail_count: int,
+    lock_minutes: int,
+) -> asyncio.Task[Any]:
+    """非阻塞调度账号防爆破锁定告警，不阻塞登录响应。"""
+    return dispatch_alert_in_background(
+        notify_login_lockout(
+            account=account,
+            client_ip=client_ip,
+            fail_count=fail_count,
+            lock_minutes=lock_minutes,
+        )
+    )
+
+
+def schedule_llm_alert(
+    *,
+    provider: str,
+    model_name: str,
+    config_name: str,
+    error_summary: str,
+    fallback_to: str = "",
+    severity: str = "critical",
+) -> asyncio.Task[Any]:
+    """非阻塞调度大模型故障/自动降级告警，不阻塞对话或流式首包响应。"""
+    return dispatch_alert_in_background(
+        notify_llm_alert(
+            provider=provider,
+            model_name=model_name,
+            config_name=config_name,
+            error_summary=error_summary,
+            fallback_to=fallback_to,
+            severity=severity,
+        )
     )
 
 

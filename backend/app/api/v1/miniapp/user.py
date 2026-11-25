@@ -78,6 +78,15 @@ async def update_miniapp_profile(
     openid = str(current_user.get("openid", ""))
     clean_nick = req.nickname.strip()[:64] if req.nickname is not None else None
     clean_avatar = req.avatar_url.strip()[:512] if req.avatar_url is not None else None
+    if clean_avatar:
+        if any(ch.isspace() for ch in clean_avatar) or not clean_avatar.startswith(
+            ("https://", "http://", "/")
+        ):
+            raise BusinessException(
+                "头像地址格式无效，仅支持 http(s):// 或站内路径",
+                code=40063,
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
 
     try:
         factory = get_session_factory()

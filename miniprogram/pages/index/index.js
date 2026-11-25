@@ -1,5 +1,6 @@
 const api = require('../../services/api')
 const auth = require('../../utils/auth')
+const env = require('../../config/env')
 
 const CATEGORIES = [
   { key: 'all', label: '全部导师' },
@@ -25,15 +26,40 @@ Page({
     recentConversations: [],
   },
 
+  _lastEnvKey: '',
+
   onLoad() {
+    this._lastEnvKey = env.getEnvConfig().ENV
     this.bootstrapHome()
   },
 
   onShow() {
+    const currentEnv = env.getEnvConfig().ENV
     const cached = auth.getCachedUser()
-    if (cached) {
-      this.setData({ userInfo: cached })
+    this.setData({ userInfo: cached || null })
+
+    if (currentEnv !== this._lastEnvKey) {
+      this._lastEnvKey = currentEnv
+      this.setData({
+        allPersonas: [],
+        filteredPersonas: [],
+        recentConversations: [],
+        loveProfile: null,
+        quotaText: '',
+      })
+      this.bootstrapHome()
+      return
     }
+
+    if (!auth.getToken()) {
+      this.setData({
+        recentConversations: [],
+        loveProfile: null,
+        quotaText: '',
+      })
+      return
+    }
+
     if (!this.data.loading) {
       this.refreshDynamicCards()
     }

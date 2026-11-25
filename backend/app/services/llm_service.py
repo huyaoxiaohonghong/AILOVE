@@ -762,7 +762,7 @@ class LLMService:
                                 fb_cfg.provider,
                                 fb_cfg.model_name,
                             )
-                            await alert_service.notify_llm_alert(
+                            alert_service.schedule_llm_alert(
                                 provider=cfg.provider,
                                 model_name=cfg.model_name,
                                 config_name=cfg.name,
@@ -779,7 +779,7 @@ class LLMService:
                             )
 
                 if ai_msg is None:
-                    await alert_service.notify_llm_alert(
+                    alert_service.schedule_llm_alert(
                         provider=cfg.provider,
                         model_name=cfg.model_name,
                         config_name=cfg.name,
@@ -950,26 +950,29 @@ class LLMService:
                         backups = await resolve_fallback_configs(exclude_id=cfg.id)
                         for fb_cfg in backups:
                             fb_emitted = False
+                            prompt_tokens = 0
+                            completion_tokens = 0
+                            token_usage = 0
                             try:
                                 fb_adapter, fb_llm = self._build_llm(
                                     fb_cfg, temperature, streaming=True
                                 )
                                 async for chunk in fb_llm.astream(messages):
-                                    if not fb_emitted:
+                                    r_piece, c_piece = fb_adapter.extract_chunk_deltas(chunk)
+                                    if (r_piece or c_piece) and not fb_emitted:
                                         fb_emitted = True
                                         active_cfg = fb_cfg
                                         yield (
                                             "fallback",
                                             f"{fb_cfg.name} ({fb_cfg.model_name})",
                                         )
-                                        await alert_service.notify_llm_alert(
+                                        alert_service.schedule_llm_alert(
                                             provider=cfg.provider,
                                             model_name=cfg.model_name,
                                             config_name=cfg.name,
                                             error_summary=primary_friendly,
                                             fallback_to=f"{fb_cfg.name} ({fb_cfg.model_name})",
                                         )
-                                    r_piece, c_piece = fb_adapter.extract_chunk_deltas(chunk)
                                     if r_piece:
                                         yield "reasoning", r_piece
                                     if c_piece:
@@ -993,7 +996,7 @@ class LLMService:
                                     raise self._wrap_llm_error(fb_exc, fb_cfg, t0) from fb_exc
 
                     if not recovered:
-                        await alert_service.notify_llm_alert(
+                        alert_service.schedule_llm_alert(
                             provider=cfg.provider,
                             model_name=cfg.model_name,
                             config_name=cfg.name,

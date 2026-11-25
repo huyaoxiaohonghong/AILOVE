@@ -186,7 +186,11 @@ def _resolve_identity(current_user: dict[str, Any]) -> tuple[str, int]:
 
 def _resolve_user_meta(current_user: dict[str, Any]) -> tuple[str, str]:
     username = str(
-        current_user.get("username") or current_user.get("email") or current_user.get("sub") or ""
+        current_user.get("username")
+        or current_user.get("email")
+        or current_user.get("nickname")
+        or current_user.get("sub")
+        or ""
     )
     user_type = str(current_user.get("type", "web"))
     role = str(current_user.get("role") or ("user" if user_type == "miniapp" else "user"))

@@ -1,4 +1,12 @@
-const { request, TOKEN_KEY, USER_KEY } = require('./request')
+const {
+  request,
+  clearAuthState,
+  registerUnauthorizedRelogin,
+  TOKEN_KEY,
+  USER_KEY,
+} = require('./request')
+
+let _inFlightLogin = null
 
 function getToken() {
   return wx.getStorageSync(TOKEN_KEY) || ''
@@ -19,20 +27,20 @@ function saveSession(token, user) {
 }
 
 function logout() {
-  wx.removeStorageSync(TOKEN_KEY)
-  wx.removeStorageSync(USER_KEY)
-  const app = getApp()
-  if (app && app.globalData) {
-    app.globalData.token = ''
-    app.globalData.userInfo = null
-  }
+  _inFlightLogin = null
+  clearAuthState()
 }
 
 /**
- * 调用 wx.login 获取 code 并向 FastAPI 后端换取 JWT Token
+ * 调用 wx.login 获取 code 并向 FastAPI 后端换取 JWT Token（静默登录自动并发去重）
  */
 function wxLogin(extraProfile = {}) {
-  return new Promise((resolve, reject) => {
+  const hasExtra = Boolean(extraProfile && (extraProfile.nickname || extraProfile.avatar_url))
+  if (!hasExtra && _inFlightLogin) {
+    return _inFlightLogin
+  }
+
+  const loginPromise = new Promise((resolve, reject) => {
     wx.login({
       success(loginRes) {
         if (!loginRes.code) {
@@ -60,6 +68,20 @@ function wxLogin(extraProfile = {}) {
       },
     })
   })
+
+  if (!hasExtra) {
+    _inFlightLogin = loginPromise
+    loginPromise.then(
+      () => {
+        if (_inFlightLogin === loginPromise) _inFlightLogin = null
+      },
+      () => {
+        if (_inFlightLogin === loginPromise) _inFlightLogin = null
+      }
+    )
+  }
+
+  return loginPromise
 }
 
 /**
@@ -72,6 +94,9 @@ async function ensureLogin() {
   const res = await wxLogin()
   return res.user
 }
+
+// 注册 401 令牌过期时的单飞静默重登处理器
+registerUnauthorizedRelogin(() => wxLogin())
 
 module.exports = {
   getToken,

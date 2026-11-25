@@ -1,5 +1,6 @@
 const api = require('../../services/api')
 const auth = require('../../utils/auth')
+const env = require('../../config/env')
 
 const WELCOME_BUBBLE = {
   id: 1,
@@ -23,6 +24,7 @@ Page({
     quotaText: '',
     inputValue: '',
     sending: false,
+    scrollTop: 0,
     scrollToId: '',
     messages: [WELCOME_BUBBLE],
   },
@@ -31,16 +33,48 @@ Page({
   _flushTimer: null,
   _pendingDraft: null,
   _initialized: false,
+  _lastEnvKey: '',
+  _scrollTick: 0,
+
+  noop() {},
+
+  nextBottomScrollTop() {
+    this._scrollTick += 1
+    return 999999 + (this._scrollTick % 2)
+  },
 
   onLoad() {
+    this._lastEnvKey = env.getEnvConfig().ENV
     this.initChatPage()
   },
 
   onShow() {
-    if (this._initialized) {
-      this.refreshLightMeta()
-      this.applyPendingIntent()
+    if (!this._initialized) return
+    const currentEnv = env.getEnvConfig().ENV
+    if (currentEnv !== this._lastEnvKey) {
+      this._lastEnvKey = currentEnv
+      this.resetToNewChat(null)
+      this.setData({
+        personas: [],
+        conversations: [],
+        loveProfileActive: false,
+        loveProfileStage: '',
+        quotaText: '',
+      })
+      this.initChatPage()
+      return
     }
+    if (!auth.getToken()) {
+      this.setData({
+        conversations: [],
+        loveProfileActive: false,
+        loveProfileStage: '',
+        quotaText: '',
+      })
+      return
+    }
+    this.refreshLightMeta()
+    this.applyPendingIntent()
   },
 
   onUnload() {
@@ -210,6 +244,7 @@ Page({
         sessionId: detail.session_id,
         messages: list,
         scrollToId: `msg-${lastId}`,
+        scrollTop: this.nextBottomScrollTop(),
       })
     } catch (err) {
       wx.showToast({ title: (err && err.message) || '加载历史会话失败', icon: 'none' })
@@ -317,7 +352,7 @@ Page({
         [`${keyPrefix}.loveProfileInjected`]: draft.loveProfileInjected,
         [`${keyPrefix}.emotionCare`]: draft.emotionCare,
         [`${keyPrefix}.isError`]: draft.isError,
-        scrollToId: `msg-${draft.id}`,
+        scrollTop: this.nextBottomScrollTop(),
       })
     }, 75)
   },
@@ -337,7 +372,7 @@ Page({
       [`${keyPrefix}.loveProfileInjected`]: draft.loveProfileInjected,
       [`${keyPrefix}.emotionCare`]: draft.emotionCare,
       [`${keyPrefix}.isError`]: draft.isError,
-      scrollToId: `msg-${draft.id}`,
+      scrollTop: this.nextBottomScrollTop(),
     })
   },
 
@@ -363,7 +398,8 @@ Page({
     this.setData({
       messages: nextList,
       sending: true,
-      scrollToId: `msg-${aiMsg.id}`,
+      scrollToId: 'chat-bottom-anchor',
+      scrollTop: this.nextBottomScrollTop(),
     })
 
     try {

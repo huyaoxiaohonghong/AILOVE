@@ -560,7 +560,7 @@ async def login_account(
             lock_mins = await sys_config_service.get_int(
                 "security.login_lock_minutes", default=settings.LOGIN_LOCK_MINUTES
             )
-            await alert_service.notify_login_lockout(
+            alert_service.schedule_login_lockout_alert(
                 account=acct,
                 client_ip=client_ip,
                 fail_count=fail_count,

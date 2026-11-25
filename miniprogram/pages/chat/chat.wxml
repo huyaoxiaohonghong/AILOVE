@@ -44,6 +44,7 @@
   <scroll-view
     class="chat-scroll"
     scroll-y="true"
+    scroll-top="{{scrollTop}}"
     scroll-into-view="{{scrollToId}}"
     scroll-with-animation="true"
   >
@@ -111,6 +112,7 @@
           </view>
         </view>
       </view>
+      <view id="chat-bottom-anchor" style="height: 24rpx;"></view>
     </view>
   </scroll-view>
 
@@ -153,7 +155,7 @@
 
   <!-- 历史会话底部抽屉 -->
   <view wx:if="{{historyVisible}}" class="sheet-mask" bindtap="onCloseHistory">
-    <view class="sheet-panel safe-bottom" catchtap="">
+    <view class="sheet-panel safe-bottom" catchtap="noop">
       <view class="sheet-head">
         <text class="sheet-title">历史咨询记录 ({{conversations.length}})</text>
         <text class="sheet-close" bindtap="onCloseHistory">关闭</text>
@@ -179,7 +181,7 @@
               <text class="hist-model">{{item.model_name || 'AI'}}</text>
             </view>
           </view>
-          <view class="hist-ops" catchtap="">
+          <view class="hist-ops" catchtap="noop">
             <text
               class="hist-op-btn"
               data-sid="{{item.session_id}}"

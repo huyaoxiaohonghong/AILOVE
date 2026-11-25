@@ -277,3 +277,18 @@ async def test_miniapp_wx_login_and_profile():
         conv_resp = await client.get("/api/v1/ai/conversations", headers=headers)
         assert conv_resp.status_code == 200
         assert len(conv_resp.json()["data"]["items"]) >= 1
+
+        # 校验头像地址非法协议被拒绝
+        bad_avatar = await client.patch(
+            "/api/v1/miniapp/user/profile",
+            json={"avatar_url": "javascript:alert(1)"},
+            headers=headers,
+        )
+        assert bad_avatar.status_code == 400
+
+        # 校验小程序用户审计元信息优先提取微信昵称而非纯数字 sub
+        from app.api.v1.ai.chat import _resolve_user_meta
+
+        uname, urole = _resolve_user_meta({"type": "miniapp", "sub": "42", "nickname": "小星恋恋"})
+        assert uname == "小星恋恋"
+        assert urole == "user"

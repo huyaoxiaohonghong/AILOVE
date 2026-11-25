@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_openai import ChatOpenAI
 
 from app.core.config import get_settings
 from app.core.csv_utils import render_csv_bytes, sanitize_csv_cell
+from app.core.exceptions import BusinessException
 from app.main import app
 from app.services import alert_service
 from app.services import llm_service as llm_mod
@@ -299,5 +301,119 @@ async def test_llm_auto_fallback_on_primary_402_failure(monkeypatch: pytest.Monk
     assert result.provider == "qwen"
     assert result.model == "qwen-plus"
     assert "无缝接管" in result.reply
+    # 告警采用后台任务非阻塞派发，让出一次事件循环即可完成
+    await asyncio.sleep(0)
     assert len(alert_events) == 1
     assert "通义千问备选" in alert_events[0]["fallback_to"]
+
+
+def test_alert_webhook_url_blocks_ssrf_targets():
+    for unsafe_url in (
+        "http://127.0.0.1:8000/internal",
+        "http://localhost:6379/",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://10.0.0.5/hook",
+        "http://mysql:3306/",
+        "http://redis.internal/hook",
+    ):
+        with pytest.raises(BusinessException):
+            alert_service._validate_webhook_url(unsafe_url)
+
+    assert (
+        alert_service._validate_webhook_url(
+            "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=ok"
+        )
+        == "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=ok"
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_fallback_skips_empty_role_chunk_and_dispatches_alert_nonblocking(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    primary_cfg = RuntimeAIConfig(
+        id=201,
+        name="主模型",
+        provider="deepseek",
+        model_name="deepseek-flash",
+        base_url="https://api.deepseek.com",
+        api_key="sk-primary",
+        api_key_masked="sk-p****ary",
+        temperature=0.7,
+        top_p=1.0,
+        max_tokens=2048,
+        timeout_seconds=30,
+        max_history_messages=20,
+        system_prompt="你是情感助手",
+        extra_params={"protocol": "openai"},
+    )
+    backup_cfg = RuntimeAIConfig(
+        id=202,
+        name="备用千问",
+        provider="qwen",
+        model_name="qwen-plus",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        api_key="sk-backup",
+        api_key_masked="sk-b****kup",
+        temperature=0.7,
+        top_p=1.0,
+        max_tokens=2048,
+        timeout_seconds=30,
+        max_history_messages=20,
+        system_prompt="你是情感助手",
+        extra_params={"protocol": "openai"},
+    )
+
+    alert_started = asyncio.Event()
+    alert_release = asyncio.Event()
+
+    async def slow_notify_llm(**_kwargs: Any) -> dict[str, Any]:
+        alert_started.set()
+        await alert_release.wait()
+        return {"delivered": True}
+
+    async def fake_resolve_runtime(config_id: int | None = None) -> RuntimeAIConfig:
+        return primary_cfg
+
+    async def fake_resolve_fallbacks(exclude_id: int | None = None) -> list[RuntimeAIConfig]:
+        return [backup_cfg]
+
+    def fake_build_llm(self: Any, cfg: RuntimeAIConfig, temperature: float, *, streaming: bool):
+        adapter = get_provider_adapter(cfg.provider)
+        assert adapter is not None
+
+        class _FakeStreamLLM:
+            async def astream(self, _messages: Any):
+                if cfg.id == primary_cfg.id:
+                    raise RuntimeError("Error code: 429 rate limit exceeded")
+                    yield  # pragma: no cover
+                # 首包模拟 OpenAI 空内容 role chunk，后续再输出正文
+                yield AIMessageChunk(content="")
+                yield AIMessageChunk(content="备用模型流式回复")
+
+        return adapter, _FakeStreamLLM()
+
+    monkeypatch.setattr(llm_mod, "resolve_runtime_config", fake_resolve_runtime)
+    monkeypatch.setattr(llm_mod, "resolve_fallback_configs", fake_resolve_fallbacks)
+    monkeypatch.setattr(alert_service, "notify_llm_alert", slow_notify_llm)
+    monkeypatch.setattr(llm_mod.LLMService, "_build_llm", fake_build_llm)
+
+    from app.schemas.ai import ChatRequest
+
+    _sid, _cfg, _meta, gen = await llm_mod.llm_service.stream_chat(
+        ChatRequest(message="怎么和冷战中的伴侣破冰？"),
+        user_type="web",
+        user_id=998,
+        username="stream_fb_tester",
+        role="super_admin",
+    )
+    events = [item async for item in gen]
+    # 即使 Webhook 阻塞挂起，流式响应依然无延迟完整返回
+    assert ("fallback", "备用千问 (qwen-plus)") in events
+    assert ("delta", "备用模型流式回复") in events
+    assert events.index(("fallback", "备用千问 (qwen-plus)")) < events.index(
+        ("delta", "备用模型流式回复")
+    )
+    await asyncio.wait_for(alert_started.wait(), timeout=1.0)
+    alert_release.set()
+    await asyncio.sleep(0)

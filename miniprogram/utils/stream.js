@@ -1,5 +1,5 @@
 const env = require('../config/env')
-const { getToken, clearAuthStorage } = require('./request')
+const { getToken, clearAuthState, trySilentRelogin } = require('./request')
 
 /**
  * 增量 UTF-8 解码器：纯 JS 实现，不依赖 TextDecoder，安全处理跨 chunk 截断的中文多字节序列。
@@ -84,14 +84,16 @@ function streamSseRequest(options) {
     onError,
   } = options
 
-  const token = getToken()
   const baseUrl = env.getEnvConfig().API_BASE_URL
-  const decodeChunk = createUtf8StreamDecoder()
   let sseBuffer = ''
   let receivedAnyEvent = false
   let aborted = false
   let finished = false
   let requestTask = null
+
+  function normalizeLineEndings(text) {
+    return text ? text.replace(/\r\n/g, '\n') : ''
+  }
 
   function dispatchBlock(block) {
     const lines = block.split('\n')
@@ -129,89 +131,118 @@ function streamSseRequest(options) {
   }
 
   const promise = new Promise((resolve, reject) => {
-    requestTask = wx.request({
-      url: `${baseUrl}${url}`,
-      method: 'POST',
-      data,
-      timeout,
-      enableChunked: true,
-      responseType: 'arraybuffer',
-      header: Object.assign(
-        { 'Content-Type': 'application/json' },
-        token ? { Authorization: `Bearer ${token}` } : {}
-      ),
-      success(res) {
-        if (finished) return
-        finished = true
-        const statusCode = res.statusCode
+    function startAttempt(retried) {
+      const currentToken = getToken()
+      const decodeChunk = createUtf8StreamDecoder()
+      sseBuffer = ''
 
-        if (statusCode === 401) {
-          clearAuthStorage()
-          reject(new Error('登录已过期，请重新登录'))
-          return
-        }
+      requestTask = wx.request({
+        url: `${baseUrl}${url}`,
+        method: 'POST',
+        data,
+        timeout,
+        enableChunked: true,
+        responseType: 'arraybuffer',
+        header: Object.assign(
+          { 'Content-Type': 'application/json' },
+          currentToken ? { Authorization: `Bearer ${currentToken}` } : {}
+        ),
+        success(res) {
+          if (finished) return
+          const statusCode = res.statusCode
 
-        if (statusCode >= 400) {
-          let errMsg = `请求失败 (HTTP ${statusCode})`
-          try {
-            const rawText =
+          if (statusCode === 401) {
+            clearAuthState()
+            if (Boolean(currentToken) && !retried && !aborted && !receivedAnyEvent) {
+              trySilentRelogin().then((ok) => {
+                if (ok && !aborted && !finished) {
+                  startAttempt(true)
+                } else if (!finished) {
+                  finished = true
+                  reject(new Error('登录已过期，请重新登录'))
+                }
+              })
+              return
+            }
+            finished = true
+            reject(new Error('登录已过期，请重新登录'))
+            return
+          }
+
+          finished = true
+
+          if (statusCode >= 400) {
+            let errMsg = `请求失败 (HTTP ${statusCode})`
+            try {
+              let rawText = ''
+              if (res.data instanceof ArrayBuffer) {
+                rawText = decodeChunk(res.data)
+              } else if (typeof res.data === 'string') {
+                rawText = res.data
+              } else if (res.data && typeof res.data === 'object') {
+                rawText = JSON.stringify(res.data)
+              }
+              // 微信开启 enableChunked 时，4xx/5xx 响应体常先流向 onChunkReceived，res.data 为空
+              if (!rawText.trim() && sseBuffer.trim()) {
+                rawText = sseBuffer
+              }
+              const parsed = JSON.parse(rawText)
+              if (parsed && (parsed.message || parsed.detail)) {
+                errMsg = String(parsed.message || parsed.detail)
+              }
+            } catch (_e) {
+              // 忽略非 JSON 错误体解析异常
+            }
+            reject(new Error(errMsg))
+            return
+          }
+
+          if (!receivedAnyEvent && res.data) {
+            const fullText =
               res.data instanceof ArrayBuffer
                 ? decodeChunk(res.data)
                 : typeof res.data === 'string'
                   ? res.data
-                  : JSON.stringify(res.data || {})
-            const parsed = JSON.parse(rawText)
-            if (parsed && parsed.message) errMsg = parsed.message
-          } catch (_e) {
-            // 忽略解析异常
+                  : ''
+            sseBuffer += normalizeLineEndings(fullText)
           }
-          reject(new Error(errMsg))
-          return
-        }
 
-        if (!receivedAnyEvent && res.data) {
-          const fullText =
-            res.data instanceof ArrayBuffer
-              ? decodeChunk(res.data)
-              : typeof res.data === 'string'
-                ? res.data
-                : ''
-          sseBuffer += fullText
-        }
+          if (sseBuffer.trim()) {
+            const rest = sseBuffer.split('\n\n')
+            sseBuffer = ''
+            rest.forEach((b) => {
+              if (b.trim()) dispatchBlock(b)
+            })
+          }
+          resolve()
+        },
+        fail(err) {
+          if (finished) return
+          finished = true
+          if (aborted) {
+            resolve()
+            return
+          }
+          reject(new Error((err && err.errMsg) || '流式连接中断，请稍后重试'))
+        },
+      })
 
-        if (sseBuffer.trim()) {
-          const rest = sseBuffer.split('\n\n')
-          sseBuffer = ''
-          rest.forEach((b) => {
+      if (requestTask && typeof requestTask.onChunkReceived === 'function') {
+        requestTask.onChunkReceived((res) => {
+          if (aborted || !res || !res.data) return
+          const piece = normalizeLineEndings(decodeChunk(res.data))
+          if (!piece) return
+          sseBuffer += piece
+          const blocks = sseBuffer.split('\n\n')
+          sseBuffer = blocks.pop() || ''
+          blocks.forEach((b) => {
             if (b.trim()) dispatchBlock(b)
           })
-        }
-        resolve()
-      },
-      fail(err) {
-        if (finished) return
-        finished = true
-        if (aborted) {
-          resolve()
-          return
-        }
-        reject(new Error((err && err.errMsg) || '流式连接中断，请稍后重试'))
-      },
-    })
-
-    if (requestTask && typeof requestTask.onChunkReceived === 'function') {
-      requestTask.onChunkReceived((res) => {
-        if (aborted || !res || !res.data) return
-        const piece = decodeChunk(res.data)
-        if (!piece) return
-        sseBuffer += piece
-        const blocks = sseBuffer.split('\n\n')
-        sseBuffer = blocks.pop() || ''
-        blocks.forEach((b) => {
-          if (b.trim()) dispatchBlock(b)
         })
-      })
+      }
     }
+
+    startAttempt(false)
   })
 
   return {

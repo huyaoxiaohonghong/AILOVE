@@ -559,7 +559,8 @@ async function sendPromptText(text: string, appendUserBubble = true) {
       assistantMsg.loveProfileInjected = Boolean(res.love_profile_injected)
       assistantMsg.emotionCare = res.emotion_care ?? null
       const pPrefix = res.persona_name ? `${res.persona_name} · ` : ''
-      assistantMsg.modelLabel = `${pPrefix}${res.config_name || 'AI'} (${res.model})${res.is_mock ? ' · 演示' : ''}`
+      const fbSuffix = res.fallback_used ? ' · 自动容灾接管' : ''
+      assistantMsg.modelLabel = `${pPrefix}${res.config_name || 'AI'} (${res.model})${res.is_mock ? ' · 演示' : ''}${fbSuffix}`
       await scrollToBottom()
     }
     void Promise.all([loadConversations(), loadQuota()])
@@ -651,6 +652,9 @@ async function handleSubmitReplyHelper() {
               assistantMsg.modelLabel = `${pPrefix}${meta.config_name || 'AI'} (${meta.model})${meta.is_mock ? ' · 演示' : ''}`
             }
           },
+          onFallback: (backupLabel) => {
+            assistantMsg.modelLabel = `${backupLabel} · 自动容灾接管`
+          },
           onReasoning: (chunk) => {
             assistantMsg.reasoning = (assistantMsg.reasoning || '') + chunk
             void scrollToBottom()
@@ -683,7 +687,8 @@ async function handleSubmitReplyHelper() {
       assistantMsg.loveProfileInjected = Boolean(res.love_profile_injected)
       assistantMsg.emotionCare = res.emotion_care ?? null
       const pPrefix = res.persona_name ? `${res.persona_name} · ` : ''
-      assistantMsg.modelLabel = `${pPrefix}${res.config_name || 'AI'} (${res.model})${res.is_mock ? ' · 演示' : ''}`
+      const fbSuffix = res.fallback_used ? ' · 自动容灾接管' : ''
+      assistantMsg.modelLabel = `${pPrefix}${res.config_name || 'AI'} (${res.model})${res.is_mock ? ' · 演示' : ''}${fbSuffix}`
       await scrollToBottom()
     }
     replyForm.partner_message = ''
