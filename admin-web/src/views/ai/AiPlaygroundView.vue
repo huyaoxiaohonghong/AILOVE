@@ -1656,7 +1656,7 @@ onBeforeUnmount(() => {
             {{
               replyPresets.has_vision_model
                 ? `👁️ 已就绪识图引擎：${replyPresets.vision_model_label}`
-                : '💡 上传截图需先在「AI 模型配置」启用通义千问 qwen-vl-plus 或豆包 Vision（未填 Key 时为演示模式）'
+                : '💡 上传截图需先在「AI 模型配置」启用 deepseek-flash 或通义千问 VL（未填 Key 时为演示模式）'
             }}
           </div>
         </el-form-item>

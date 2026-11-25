@@ -217,9 +217,10 @@ class DeepSeekProviderAdapter(BaseProviderAdapter):
             ModelPreset(
                 id="deepseek-flash",
                 label="DeepSeek Flash (deepseek-flash)",
-                description="高速轻量主力模型，低延迟高性价比，适合实时对话与日常问答。",
+                description="高速轻量主力模型，原生支持文本与微信聊天截图多模态识图，低延迟高性价比。",
                 context_window=131072,
                 supports_reasoning=False,
+                supports_vision=True,
                 supports_temperature=True,
                 default_max_tokens=4096,
             ),

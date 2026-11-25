@@ -768,8 +768,8 @@ class LLMService:
         vision_cfg = await resolve_vision_config(config_id=config_id)
         if vision_cfg is None:
             raise BusinessException(
-                "当前尚未配置支持识图的多模态模型，请管理员在「AI 模型配置」中添加通义千问 "
-                "qwen-vl-plus / 豆包 Vision 等视觉模型，或改为粘贴文字拆解",
+                "当前主模型不支持识图且未找到启用中的视觉模型，请在「AI 模型配置」启用 "
+                "DeepSeek Flash (deepseek-flash) 或通义千问 VL / 豆包 Vision 后重试",
                 code=40055,
                 status_code=400,
             )

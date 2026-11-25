@@ -134,12 +134,17 @@ async def test_reply_helper_multimodal_images_routing_and_never_persists_base64(
         assert "data:image/" not in raw_hist
         assert "iVBORw0KGgo" not in raw_hist
 
-        # 4. 当主模型为非视觉 DeepSeek 且无视觉模型时，报错友好引导
+        # 4. 校验 DeepSeek Flash 支持多模态识图、V4 Pro 为纯文本，且无视觉模型时报错友好引导
+        ds_adapter = get_provider_adapter("deepseek")
+        assert ds_adapter is not None
+        assert ds_adapter.supports_vision_model("deepseek-flash") is True
+        assert ds_adapter.supports_vision_model("deepseek-v4-pro") is False
+
         text_only_cfg = RuntimeAIConfig(
             id=801,
-            name="DeepSeek 纯文本",
+            name="DeepSeek V4 Pro 纯文本",
             provider="deepseek",
-            model_name="deepseek-flash",
+            model_name="deepseek-v4-pro",
             base_url="https://api.deepseek.com",
             api_key="sk-text-only",
             api_key_masked="sk-t****ly",
@@ -153,15 +158,15 @@ async def test_reply_helper_multimodal_images_routing_and_never_persists_base64(
         )
         vision_cfg = RuntimeAIConfig(
             id=802,
-            name="千问视觉识图",
-            provider="qwen",
-            model_name="qwen-vl-plus",
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-            api_key="sk-qwen-vision",
-            api_key_masked="sk-q****on",
+            name="DeepSeek Flash 视觉识图",
+            provider="deepseek",
+            model_name="deepseek-flash",
+            base_url="https://api.deepseek.com",
+            api_key="sk-deepseek-vision",
+            api_key_masked="sk-d****on",
             temperature=0.7,
             top_p=1.0,
-            max_tokens=2048,
+            max_tokens=4096,
             timeout_seconds=30,
             max_history_messages=20,
             system_prompt="你是情感军师",
@@ -182,9 +187,9 @@ async def test_reply_helper_multimodal_images_routing_and_never_persists_base64(
             headers=headers,
         )
         assert no_vision_resp.status_code == 400
-        assert "多模态" in no_vision_resp.json()["message"]
+        assert "deepseek-flash" in no_vision_resp.json()["message"]
 
-        # 5. 当存在视觉模型时，自动切换为视觉模型且向 LLM 传入 image_url 块
+        # 5. 当存在 deepseek-flash 视觉模型时，自动切换为识图模型且向 LLM 传入 image_url 块
         captured_messages: list[Any] = []
 
         async def fake_has_vision(config_id: int | None = None) -> RuntimeAIConfig:
@@ -209,7 +214,7 @@ async def test_reply_helper_multimodal_images_routing_and_never_persists_base64(
             headers=headers,
         )
         assert vision_ok.status_code == 200
-        assert vision_ok.json()["data"]["model"] == "qwen-vl-plus"
+        assert vision_ok.json()["data"]["model"] == "deepseek-flash"
         human_msg = [m for m in captured_messages if isinstance(m, HumanMessage)][-1]
         assert isinstance(human_msg.content, list)
         assert any(part.get("type") == "image_url" for part in human_msg.content)
