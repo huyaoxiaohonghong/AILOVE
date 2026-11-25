@@ -142,4 +142,6 @@
       转入对话继续追问 ›
     </button>
   </view>
+
+  <mascot-lian bottomOffset="{{90}}" pageHint="直接传微信聊天截图也能识图出招哦~" />
 </view>

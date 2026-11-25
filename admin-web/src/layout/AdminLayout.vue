@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from '@/plugins/element-plus'
 import BrandLogo from '@/components/BrandLogo.vue'
+import MascotLian from '@/components/MascotLian.vue'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 
@@ -211,6 +212,7 @@ async function handleLogout() {
         </div>
       </el-main>
     </el-container>
+    <MascotLian v-if="authStore.isAuthenticated" />
   </el-container>
 </template>
 

@@ -177,4 +177,6 @@
   </view>
 
   <button wx:if="{{userInfo}}" class="logout-btn" bindtap="handleLogout">退出当前登录</button>
+
+  <mascot-lian bottomOffset="{{140}}" />
 </view>

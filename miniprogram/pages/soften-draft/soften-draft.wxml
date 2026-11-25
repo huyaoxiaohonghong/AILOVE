@@ -91,4 +91,6 @@
       转入对话继续聊 ›
     </button>
   </view>
+
+  <mascot-lian bottomOffset="{{90}}" pageHint="发火前深呼吸，恋恋陪你先柔化一下~" />
 </view>

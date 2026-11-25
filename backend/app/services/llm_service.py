@@ -819,7 +819,7 @@ class LLMService:
         if persona_id is None:
             enabled_personas = await ai_persona_service.list_personas(enabled_only=True)
             for item in enabled_personas:
-                if item.get("code") == "love_conflict_mediator":
+                if item.get("code") in {"conflict_mediator", "love_conflict_mediator"}:
                     persona_id = int(item["id"])
                     break
 

@@ -44,6 +44,7 @@ import {
   type UserLoveProfile,
 } from '@/api/ai'
 import { decodeUtf8Base64, renderMarkdown } from '@/utils/markdown'
+import { useMascotStore } from '@/stores/mascot'
 
 interface ChatBubble {
   id: number
@@ -112,6 +113,20 @@ const DEFAULT_REPLY_PRESETS: ReplyHelperPresets = {
 }
 
 const route = useRoute()
+const mascotStore = useMascotStore()
+
+function syncMascotOutcome(assistantMsg: ChatBubble, happyTip: string) {
+  mascotStore.setSpeaking(false)
+  if (assistantMsg.emotionCare) {
+    mascotStore.triggerComfort('恋恋给你抱抱，难过时先深呼吸一下~', 5400)
+    return
+  }
+  if (!assistantMsg.isError && assistantMsg.content.trim()) {
+    mascotStore.triggerHappy(happyTip, 2400)
+  } else {
+    mascotStore.setMood('idle')
+  }
+}
 
 const availableModels = ref<AvailableAIModel[]>([])
 const selectedConfigId = ref<number | undefined>(undefined)
@@ -341,6 +356,7 @@ async function handleFavoriteBubble(msg: ChatBubble) {
       category: cat,
       scene_label: msg.modelLabel?.split('(')[0]?.trim() || 'AI 对话',
     })
+    mascotStore.triggerHappy('帮你在高情商话术库藏好啦 ✨', 2400)
     ElMessage.success(res.deduplicated ? '已在收藏夹中' : '已收藏到高情商话术库')
   } catch {
     // 忽略
@@ -683,6 +699,8 @@ async function scrollToBottom() {
 async function sendPromptText(text: string, appendUserBubble = true) {
   if (!text || sending.value) return
   sending.value = true
+  mascotStore.setMood('thinking')
+  mascotStore.setSpeaking(false)
 
   if (appendUserBubble) {
     messages.value.push({ id: Date.now(), role: 'user', content: text })
@@ -728,6 +746,9 @@ async function sendPromptText(text: string, appendUserBubble = true) {
             sessionId.value = meta.session_id
             assistantMsg.loveProfileInjected = Boolean(meta.love_profile_injected)
             assistantMsg.emotionCare = meta.emotion_care ?? null
+            if (meta.emotion_care) {
+              mascotStore.triggerComfort('恋恋给你抱抱，难过时先深呼吸一下~', 5400)
+            }
             if (meta.model) {
               const pPrefix = meta.persona_name ? `${meta.persona_name} · ` : ''
               assistantMsg.modelLabel = `${pPrefix}${meta.config_name || 'AI'} (${meta.model})${meta.is_mock ? ' · 演示' : ''}`
@@ -741,6 +762,7 @@ async function sendPromptText(text: string, appendUserBubble = true) {
             void scrollToBottom()
           },
           onDelta: (chunk) => {
+            if (!assistantMsg.emotionCare) mascotStore.setSpeaking(true)
             assistantMsg.content += chunk
             void scrollToBottom()
           },
@@ -769,6 +791,7 @@ async function sendPromptText(text: string, appendUserBubble = true) {
       assistantMsg.modelLabel = `${pPrefix}${res.config_name || 'AI'} (${res.model})${res.is_mock ? ' · 演示' : ''}${fbSuffix}`
       await scrollToBottom()
     }
+    syncMascotOutcome(assistantMsg, '灵感分析好啦，快看看合适哪一句 ✨')
     void Promise.all([loadConversations(), loadQuota()])
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
@@ -782,6 +805,7 @@ async function sendPromptText(text: string, appendUserBubble = true) {
   } finally {
     abortController = null
     sending.value = false
+    mascotStore.setSpeaking(false)
   }
 }
 
@@ -808,6 +832,8 @@ async function handleSubmitReplyHelper() {
 
   replyHelperVisible.value = false
   sending.value = true
+  mascotStore.setMood('thinking')
+  mascotStore.setSpeaking(false)
 
   const userBubble: ChatBubble = {
     id: Date.now(),
@@ -855,6 +881,9 @@ async function handleSubmitReplyHelper() {
             }
             assistantMsg.loveProfileInjected = Boolean(meta.love_profile_injected)
             assistantMsg.emotionCare = meta.emotion_care ?? null
+            if (meta.emotion_care) {
+              mascotStore.triggerComfort('恋恋给你抱抱，难过时先深呼吸一下~', 5400)
+            }
             if (meta.model) {
               const pPrefix = meta.persona_name ? `${meta.persona_name} · ` : ''
               assistantMsg.modelLabel = `${pPrefix}${meta.config_name || 'AI'} (${meta.model})${meta.is_mock ? ' · 演示' : ''}`
@@ -868,6 +897,7 @@ async function handleSubmitReplyHelper() {
             void scrollToBottom()
           },
           onDelta: (chunk) => {
+            if (!assistantMsg.emotionCare) mascotStore.setSpeaking(true)
             assistantMsg.content += chunk
             void scrollToBottom()
           },
@@ -903,6 +933,7 @@ async function handleSubmitReplyHelper() {
     replyForm.context = ''
     replyForm.my_intent = ''
     replyImages.value = []
+    syncMascotOutcome(assistantMsg, '高情商回复备选好啦，挑一条最合心意的 ✨')
     void Promise.all([loadConversations(), loadQuota()])
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
@@ -916,6 +947,7 @@ async function handleSubmitReplyHelper() {
   } finally {
     abortController = null
     sending.value = false
+    mascotStore.setSpeaking(false)
   }
 }
 
@@ -932,6 +964,8 @@ async function handleSubmitSoftenDraft() {
     softenForm.intensity
   softenVisible.value = false
   sending.value = true
+  mascotStore.setMood('thinking')
+  mascotStore.setSpeaking(false)
 
   const userBubble: ChatBubble = {
     id: Date.now(),
@@ -971,6 +1005,9 @@ async function handleSubmitSoftenDraft() {
             if (meta.prompt_preview) userBubble.content = meta.prompt_preview
             assistantMsg.loveProfileInjected = Boolean(meta.love_profile_injected)
             assistantMsg.emotionCare = meta.emotion_care ?? null
+            if (meta.emotion_care) {
+              mascotStore.triggerComfort('先深呼吸，恋恋陪你把话揉软再发出~', 5400)
+            }
             if (meta.model) {
               const pPrefix = meta.persona_name ? `${meta.persona_name} · ` : ''
               assistantMsg.modelLabel = `${pPrefix}${meta.config_name || 'AI'} (${meta.model})${meta.is_mock ? ' · 演示' : ''}`
@@ -984,6 +1021,7 @@ async function handleSubmitSoftenDraft() {
             void scrollToBottom()
           },
           onDelta: (chunk) => {
+            if (!assistantMsg.emotionCare) mascotStore.setSpeaking(true)
             assistantMsg.content += chunk
             void scrollToBottom()
           },
@@ -1015,6 +1053,7 @@ async function handleSubmitSoftenDraft() {
     }
     softenForm.draft_message = ''
     softenForm.context = ''
+    syncMascotOutcome(assistantMsg, '先深呼吸，改好温和表达啦 💙')
     void Promise.all([loadConversations(), loadQuota()])
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
@@ -1028,6 +1067,7 @@ async function handleSubmitSoftenDraft() {
   } finally {
     abortController = null
     sending.value = false
+    mascotStore.setSpeaking(false)
   }
 }
 
@@ -1084,8 +1124,8 @@ function handleMessageAreaClick(event: MouseEvent) {
   }
 }
 
-onMounted(() => {
-  void Promise.all([
+onMounted(async () => {
+  await Promise.all([
     loadModels(),
     loadPersonas(),
     loadConversations(),
@@ -1093,6 +1133,10 @@ onMounted(() => {
     loadLoveProfile(),
     loadReplyPresets(),
   ])
+  const qSid = typeof route.query.session_id === 'string' ? route.query.session_id.trim() : ''
+  if (qSid) {
+    await selectConversation({ session_id: qSid } as AIConversationItem)
+  }
 })
 
 onBeforeUnmount(() => {

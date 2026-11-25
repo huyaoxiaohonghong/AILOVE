@@ -222,4 +222,6 @@
       </scroll-view>
     </view>
   </view>
+
+  <mascot-lian bottomOffset="{{240}}" externalMood="{{mascotMood}}" />
 </view>

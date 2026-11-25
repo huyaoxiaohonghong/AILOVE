@@ -177,4 +177,6 @@
       </view>
     </view>
   </view>
+
+  <mascot-lian bottomOffset="{{140}}" pageHint="点我随时问功能或聊心事哦~" />
 </view>

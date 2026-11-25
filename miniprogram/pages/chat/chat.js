@@ -25,6 +25,7 @@ Page({
     inputValue: '',
     sending: false,
     incognitoMode: false,
+    mascotMood: '',
     scrollTop: 0,
     scrollToId: '',
     messages: [WELCOME_BUBBLE],
@@ -33,11 +34,26 @@ Page({
   _streamHandle: null,
   _flushTimer: null,
   _pendingDraft: null,
+  _mascotTimer: null,
   _initialized: false,
   _lastEnvKey: '',
   _scrollTick: 0,
 
   noop() {},
+
+  setMascotMood(mood, resetMs) {
+    if (this._mascotTimer) {
+      clearTimeout(this._mascotTimer)
+      this._mascotTimer = null
+    }
+    this.setData({ mascotMood: mood || '' })
+    if (mood && resetMs > 0) {
+      this._mascotTimer = setTimeout(() => {
+        this.setData({ mascotMood: '' })
+        this._mascotTimer = null
+      }, resetMs)
+    }
+  },
 
   nextBottomScrollTop() {
     this._scrollTick += 1
@@ -80,6 +96,10 @@ Page({
 
   onUnload() {
     this.stopStreamSilently()
+    if (this._mascotTimer) {
+      clearTimeout(this._mascotTimer)
+      this._mascotTimer = null
+    }
   },
 
   async initChatPage() {
@@ -421,7 +441,9 @@ Page({
       scrollToId: 'chat-bottom-anchor',
       scrollTop: this.nextBottomScrollTop(),
     })
+    this.setMascotMood('thinking', 0)
 
+    let receivedCare = false
     try {
       await auth.ensureLogin()
       const isIncognito = Boolean(this.data.incognitoMode)
@@ -449,6 +471,10 @@ Page({
             this._pendingDraft.modelLabel = `${prefix}${meta.model || 'AI'}${meta.is_mock ? ' · 演示' : ''}`
             this._pendingDraft.loveProfileInjected = Boolean(meta.love_profile_injected)
             this._pendingDraft.emotionCare = meta.emotion_care || null
+            if (meta.emotion_care) {
+              receivedCare = true
+              this.setMascotMood('comfort', 5400)
+            }
             this.scheduleDraftFlush(aiIndex)
           }
         },
@@ -465,6 +491,9 @@ Page({
           }
         },
         onDelta: (chunk) => {
+          if (!receivedCare && this.data.mascotMood === 'thinking') {
+            this.setMascotMood('', 0)
+          }
           if (this._pendingDraft) {
             this._pendingDraft.content += chunk
             this.scheduleDraftFlush(aiIndex)
@@ -478,12 +507,16 @@ Page({
               : `⚠️ ${errMsg}`
             this.flushDraftNow(aiIndex)
           }
+          this.setMascotMood('comfort', 3000)
         },
       })
 
       this._streamHandle = handle
       await handle.promise
       this.flushDraftNow(aiIndex)
+      if (!receivedCare && this._pendingDraft && !this._pendingDraft.isError && this._pendingDraft.content) {
+        this.setMascotMood('happy', 2400)
+      }
       this.loadConversations()
       this.refreshLightMeta()
     } catch (err) {
@@ -492,6 +525,7 @@ Page({
         this._pendingDraft.content = `请求出错：${(err && err.message) || '请检查网络连接'}`
         this.flushDraftNow(aiIndex)
       }
+      this.setMascotMood('comfort', 3000)
     } finally {
       this._streamHandle = null
       this._pendingDraft = null
@@ -529,6 +563,7 @@ Page({
         category: 'chat',
         scene_label: label.slice(0, 64),
       })
+      this.setMascotMood('happy', 2200)
       wx.showToast({
         title: res && res.deduplicated ? '已在收藏夹中' : '已收藏到话术库',
         icon: 'success',

@@ -1,0 +1,167 @@
+<view class="mascot-container">
+  <!-- 贴边隐藏呼出标签 -->
+  <view
+    wx:if="{{minimized}}"
+    class="minimized-tab dock-{{dockSide}}"
+    style="top: {{topPx}}px;"
+    bindtap="onRestore"
+  >
+    <text class="mini-heart">♥</text>
+    <text class="mini-text">叫恋恋</text>
+  </view>
+
+  <!-- 可拖拽悬浮动画精灵 -->
+  <view
+    wx:else
+    class="floating-mascot {{dragging ? 'is-dragging' : ''}}"
+    style="left: {{leftPx}}px; top: {{topPx}}px;"
+    bindtouchstart="onTouchStart"
+    catchtouchmove="onTouchMove"
+    bindtouchend="onTouchEnd"
+    bindtouchcancel="onTouchEnd"
+  >
+    <!-- 主动问候气泡 -->
+    <view
+      wx:if="{{bubbleText && !drawerOpen}}"
+      class="speech-bubble side-{{dockSide}}"
+      catchtap="onOpenFromBubble"
+    >
+      <text class="bubble-msg">{{bubbleText}}</text>
+      <view class="bubble-close" catchtap="onCloseBubble">×</view>
+    </view>
+
+    <!-- 点击爱心绽放粒子 -->
+    <text
+      wx:for="{{burstHearts}}"
+      wx:key="id"
+      class="burst-heart"
+      style="--tx: {{item.tx}}px; --ty: {{item.ty}}px;"
+    >♥</text>
+
+    <!-- 角色立绘 + 呼吸/果冻动效 -->
+    <view class="sprite-stage mood-{{effectiveMood}} {{bouncing ? 'is-bouncing' : ''}}">
+      <image class="sprite-img" src="{{spritePath}}" mode="aspectFit" />
+      <view class="name-pill">
+        <view class="status-dot mood-{{effectiveMood}}" />
+        <text class="name-text">恋恋</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 半屏玻璃质感问答舱 -->
+  <view wx:if="{{drawerOpen && !minimized}}" class="sheet-backdrop" catchtap="onCloseDrawer">
+    <view class="lian-sheet" catchtap="noop">
+      <!-- 顶部身份栏 -->
+      <view class="sheet-header">
+        <view class="sheet-id">
+          <image class="header-avatar" src="{{spritePath}}" mode="aspectFit" />
+          <view class="header-info">
+            <view class="header-title-row">
+              <text class="header-name">玫瑰心狐 · 恋恋</text>
+              <text class="header-badge">{{moodStatusText}}</text>
+            </view>
+            <text class="header-sub">不懂功能问我，委屈想哭也找我抱抱~</text>
+          </view>
+        </view>
+        <view class="header-ops">
+          <view class="op-btn" bindtap="onResetTopic">新话题</view>
+          <view class="op-btn" bindtap="onMinimize">藏边</view>
+          <view class="op-btn op-close" bindtap="onCloseDrawer">×</view>
+        </view>
+      </view>
+
+      <!-- 常用功能直达条 -->
+      <scroll-view scroll-x class="quick-nav-bar" enable-flex>
+        <view class="quick-nav-list">
+          <view
+            wx:for="{{quickRoutes}}"
+            wx:key="path"
+            class="quick-nav-pill"
+            data-path="{{item.path}}"
+            bindtap="onQuickNav"
+          >
+            {{item.label}} →
+          </view>
+        </view>
+      </scroll-view>
+
+      <!-- 对话内容滚动区 -->
+      <scroll-view
+        scroll-y
+        class="sheet-body"
+        scroll-into-view="{{scrollIntoId}}"
+        scroll-with-animation
+      >
+        <!-- 低谷情绪关怀卡 -->
+        <view wx:if="{{emotionCare}}" class="care-card">
+          <text class="care-title">💗 {{emotionCare.title}}</text>
+          <text class="care-msg">{{emotionCare.message}}</text>
+        </view>
+
+        <!-- 空状态与快捷提问 -->
+        <view wx:if="{{messages.length === 0}}" class="empty-panel">
+          <view class="empty-welcome">
+            <text class="empty-title">✨ 嗨~ 我是住在 AILOVE 里的恋恋！</text>
+            <text class="empty-desc">不会用「截图识图」、不知道怎么回复暧昧对象、或者单纯想找个温柔树洞，直接点下面或者发消息给我吧~</text>
+          </view>
+          <view class="prompt-grid">
+            <view
+              wx:for="{{quickPrompts}}"
+              wx:key="*this"
+              class="prompt-chip"
+              data-prompt="{{item}}"
+              bindtap="onQuickPrompt"
+            >
+              {{item}}
+            </view>
+          </view>
+        </view>
+
+        <!-- 消息气泡流 -->
+        <view wx:else class="msg-list">
+          <view wx:for="{{messages}}" wx:key="id" class="msg-item msg-{{item.role}}">
+            <view class="msg-bubble">
+              <text user-select>{{item.content || '恋恋正在认真组织回答...'}}</text>
+            </view>
+            <view wx:if="{{item.role === 'assistant' && item.content && !sending}}" class="msg-tools">
+              <view class="tool-btn" data-content="{{item.content}}" bindtap="onCopyReply">复制</view>
+              <view
+                class="tool-btn {{item.favorited ? 'is-saved' : ''}}"
+                data-idx="{{index}}"
+                bindtap="onFavoriteReply"
+              >
+                {{item.favorited ? '已存金句 ✓' : '+ 存金句'}}
+              </view>
+            </view>
+          </view>
+        </view>
+
+        <view id="lian-bottom-anchor" class="bottom-anchor" />
+      </scroll-view>
+
+      <!-- 底部输入区 -->
+      <view class="sheet-footer">
+        <view class="composer-row">
+          <input
+            class="composer-input"
+            value="{{inputValue}}"
+            placeholder="问恋恋：怎么识图 / 怎么回 / 抱抱我..."
+            confirm-type="send"
+            bindinput="onInputChange"
+            bindconfirm="onSendInput"
+          />
+          <view
+            class="send-btn {{!inputValue || sending ? 'is-disabled' : ''}}"
+            bindtap="onSendInput"
+          >
+            {{sending ? '...' : '发送'}}
+          </view>
+        </view>
+        <view class="footer-meta">
+          <text class="drag-hint">按住恋恋头像可拖到左/右边缘</text>
+          <text class="deep-link" bindtap="onGoFullChat">转 AI 咨询深聊 →</text>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>
