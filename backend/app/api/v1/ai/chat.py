@@ -24,7 +24,7 @@ from app.schemas.ai import (
     SoftenDraftRequest,
 )
 from app.schemas.common import ok
-from app.services import favorite_reply_service, sys_config_service
+from app.services import favorite_reply_service, mascot_service, sys_config_service
 from app.services.ai_config_service import list_ai_configs, resolve_vision_config
 from app.services.ai_persona_service import list_personas
 from app.services.ai_providers import get_provider_adapter
@@ -272,6 +272,7 @@ async def purge_my_ai_data(
         cleared_favs = await favorite_reply_service.delete_all_favorites(user_type, user_id)
     if include_love_profile:
         await clear_love_profile(user_type, user_id)
+    await mascot_service.purge_mascot_data(user_type, user_id)
     return ok(
         {
             "cleared_conversations": cleared_convs,

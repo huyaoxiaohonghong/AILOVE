@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from '@/plugins/element-plus'
 import { ChatDotRound, MagicStick, Postcard } from '@element-plus/icons-vue'
@@ -47,6 +47,7 @@ import {
 import { fetchCallableSkills, fileKbInsight, type KBSkillItem } from '@/api/kb'
 import { decodeUtf8Base64, renderMarkdown } from '@/utils/markdown'
 import { useMascotStore } from '@/stores/mascot'
+import { analyzeDraftSignal } from '@/utils/mascotBrain'
 
 interface ChatBubble {
   id: number
@@ -1167,6 +1168,58 @@ function handleMessageAreaClick(event: MouseEvent) {
   }
 }
 
+let _draftBackspaces = 0
+let _draftHesitateResetAt = 0
+
+function applyMascotToolIntent() {
+  const intent = mascotStore.consumePendingToolIntent()
+  if (!intent) return
+  if (intent.type === 'open_reply_helper') {
+    if (intent.partner_message) replyForm.partner_message = intent.partner_message.slice(0, 2000)
+    if (intent.scene && ['ambiguous', 'cold_reply', 'conflict', 'date_invite', 'polite_decline'].includes(intent.scene)) {
+      replyForm.scene = intent.scene as ReplyHelperScene
+    }
+    if (intent.tone && ['playful', 'gentle', 'graceful', 'sincere', 'humorous'].includes(intent.tone)) {
+      replyForm.tone = intent.tone as ReplyHelperTone
+    }
+    replyHelperVisible.value = true
+  } else if (intent.type === 'open_soften_draft') {
+    if (intent.draft_message) softenForm.draft_message = intent.draft_message.slice(0, 2000)
+    if (intent.intensity && ['mild', 'medium', 'heated'].includes(intent.intensity)) {
+      softenForm.intensity = intent.intensity
+    }
+    softenVisible.value = true
+  }
+}
+
+watch(
+  () => mascotStore.pendingToolIntent,
+  (val) => {
+    if (val) applyMascotToolIntent()
+  },
+)
+
+watch(inputText, (nextVal, prevVal) => {
+  const clean = (nextVal || '').trim()
+  if (!clean) return
+  if (analyzeDraftSignal(clean) === 'heated') {
+    mascotStore.reportDraftSignal('heated', clean)
+    return
+  }
+  const now = Date.now()
+  if (now > _draftHesitateResetAt) {
+    _draftBackspaces = 0
+    _draftHesitateResetAt = now + 16000
+  }
+  if ((prevVal || '').length - nextVal.length >= 2) {
+    _draftBackspaces += 1
+    if (_draftBackspaces >= 3 && clean.length >= 6) {
+      _draftBackspaces = 0
+      mascotStore.reportDraftSignal('hesitation', clean)
+    }
+  }
+})
+
 onMounted(async () => {
   await Promise.all([
     loadModels(),
@@ -1181,6 +1234,7 @@ onMounted(async () => {
   if (qSid) {
     await selectConversation({ session_id: qSid } as AIConversationItem)
   }
+  applyMascotToolIntent()
 })
 
 onBeforeUnmount(() => {

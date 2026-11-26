@@ -9,6 +9,8 @@ App({
     token: '',
     // switchTab 不支持 query 参数，使用内存意图对象跨页无缝传递目标智能体或会话
     pendingChatIntent: null,
+    // 恋恋工具行动卡片预填意图（帮我回消息 / 先别发）
+    pendingToolIntent: null,
   },
 
   onLaunch() {
@@ -35,6 +37,16 @@ App({
   consumeChatIntent() {
     const intent = this.globalData.pendingChatIntent
     this.globalData.pendingChatIntent = null
+    return intent
+  },
+
+  setToolIntent(intent) {
+    this.globalData.pendingToolIntent = intent || null
+  },
+
+  consumeToolIntent() {
+    const intent = this.globalData.pendingToolIntent
+    this.globalData.pendingToolIntent = null
     return intent
   },
 })

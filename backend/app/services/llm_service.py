@@ -25,6 +25,7 @@ from app.services import (
     alert_service,
     kb_wiki_service,
     love_profile_service,
+    mascot_service,
     sys_config_service,
 )
 from app.services.ai_config_service import (
@@ -891,6 +892,15 @@ class LLMService:
         )
         if skill_blocks:
             extra_blocks.extend(skill_blocks)
+        if req.mascot_mode:
+            mascot_block, _ = await mascot_service.build_mascot_system_block(
+                user_type,
+                user_id,
+                user_message=req.message,
+                mascot_context=req.mascot_context,
+            )
+            if mascot_block:
+                extra_blocks.append(mascot_block)
         is_incognito = bool(req.incognito)
         if is_incognito:
             session_id = (req.session_id or "").strip() or f"incognito_{uuid.uuid4().hex[:12]}"
@@ -914,12 +924,17 @@ class LLMService:
         t0 = time.perf_counter()
 
         if is_mock:
-            reply = self._build_mock_reply(
-                cfg,
-                req.message,
-                image_count=len(images or []),
-                invoked_skills=invoked_skills,
-            )
+            if req.mascot_mode:
+                reply = mascot_service.build_mock_mascot_reply(
+                    req.message, invoked_skills=invoked_skills
+                )
+            else:
+                reply = self._build_mock_reply(
+                    cfg,
+                    req.message,
+                    image_count=len(images or []),
+                    invoked_skills=invoked_skills,
+                )
         else:
             adapter, llm = self._build_llm(cfg, temperature, streaming=False)
             messages = self._build_messages(
@@ -1014,9 +1029,18 @@ class LLMService:
             prompt_tokens, completion_tokens, token_usage = self._extract_token_breakdown(ai_msg)
 
         latency_ms = max(1, int((time.perf_counter() - t0) * 1000))
+        stored_reply = mascot_service.strip_mascot_protocol_tags(reply) if req.mascot_mode else reply
+        if req.mascot_mode:
+            await mascot_service.record_chat_turn(
+                user_type,
+                user_id,
+                user_message=req.message,
+                assistant_reply=stored_reply,
+                emotion_care=emotion_care,
+            )
         if not is_incognito:
             history.append({"role": "user", "content": req.message})
-            history.append({"role": "assistant", "content": reply})
+            history.append({"role": "assistant", "content": stored_reply})
             await self.save_history(
                 session_id, history, owner, max_messages=active_cfg.max_history_messages
             )
@@ -1026,7 +1050,7 @@ class LLMService:
                 user_id=user_id,
                 model_name=active_cfg.model_name,
                 user_content=req.message,
-                assistant_content=reply,
+                assistant_content=stored_reply,
                 token_usage=token_usage,
                 persona_id=persona_id,
                 persona_name=persona_name,
@@ -1113,6 +1137,15 @@ class LLMService:
         )
         if skill_blocks:
             extra_blocks.extend(skill_blocks)
+        if req.mascot_mode:
+            mascot_block, _ = await mascot_service.build_mascot_system_block(
+                user_type,
+                user_id,
+                user_message=req.message,
+                mascot_context=req.mascot_context,
+            )
+            if mascot_block:
+                extra_blocks.append(mascot_block)
         is_incognito = bool(req.incognito)
         if is_incognito:
             session_id = (req.session_id or "").strip() or f"incognito_{uuid.uuid4().hex[:12]}"
@@ -1133,11 +1166,17 @@ class LLMService:
             active_cfg = cfg
             t0 = time.perf_counter()
             if not cfg.is_configured:
-                mock_text = self._build_mock_reply(
-                    cfg,
-                    req.message,
-                    image_count=len(images or []),
-                    invoked_skills=invoked_skills,
+                mock_text = (
+                    mascot_service.build_mock_mascot_reply(
+                        req.message, invoked_skills=invoked_skills
+                    )
+                    if req.mascot_mode
+                    else self._build_mock_reply(
+                        cfg,
+                        req.message,
+                        image_count=len(images or []),
+                        invoked_skills=invoked_skills,
+                    )
                 )
                 chunk_size = 8
                 for i in range(0, len(mock_text), chunk_size):
@@ -1268,9 +1307,22 @@ class LLMService:
 
             latency_ms = max(1, int((time.perf_counter() - t0) * 1000))
             full_reply = "".join(collected)
+            stored_reply = (
+                mascot_service.strip_mascot_protocol_tags(full_reply)
+                if req.mascot_mode
+                else full_reply
+            )
+            if req.mascot_mode:
+                await mascot_service.record_chat_turn(
+                    user_type,
+                    user_id,
+                    user_message=req.message,
+                    assistant_reply=stored_reply,
+                    emotion_care=emotion_care,
+                )
             if not is_incognito:
                 history.append({"role": "user", "content": req.message})
-                history.append({"role": "assistant", "content": full_reply})
+                history.append({"role": "assistant", "content": stored_reply})
                 await self.save_history(
                     session_id, history, owner, max_messages=active_cfg.max_history_messages
                 )
@@ -1280,7 +1332,7 @@ class LLMService:
                     user_id=user_id,
                     model_name=active_cfg.model_name,
                     user_content=req.message,
-                    assistant_content=full_reply,
+                    assistant_content=stored_reply,
                     token_usage=token_usage,
                     persona_id=persona_id,
                     persona_name=persona_name,

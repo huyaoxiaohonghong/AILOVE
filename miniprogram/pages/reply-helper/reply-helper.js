@@ -63,6 +63,25 @@ Page({
 
   onLoad() {
     this.loadMeta()
+    this.applyToolIntent()
+  },
+
+  onShow() {
+    this.applyToolIntent()
+  },
+
+  applyToolIntent() {
+    const app = getApp()
+    const intent = app && typeof app.consumeToolIntent === 'function' ? app.consumeToolIntent() : null
+    if (!intent || intent.type !== 'open_reply_helper') return
+    const patch = {}
+    if (intent.partner_message) patch.partnerMessage = String(intent.partner_message).slice(0, 2000)
+    if (intent.scene) patch.scene = intent.scene
+    if (intent.tone) patch.tone = intent.tone
+    if (Object.keys(patch).length > 0) {
+      this.setData(patch)
+      wx.showToast({ title: '恋恋已为你带入原话 ✨', icon: 'none' })
+    }
   },
 
   onUnload() {

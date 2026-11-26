@@ -1,16 +1,25 @@
 <view class="mascot-container">
-  <!-- 贴边隐藏呼出标签 -->
+  <!-- 贴边探头模式（萌趣半颗小脑袋偷看） -->
   <view
     wx:if="{{minimized}}"
-    class="minimized-tab dock-{{dockSide}}"
+    class="peek-anchor dock-{{dockSide}}"
     style="top: {{topPx}}px;"
     bindtap="onRestore"
   >
-    <text class="mini-heart">♥</text>
-    <text class="mini-text">叫恋恋</text>
+    <view
+      wx:if="{{bubbleText}}"
+      class="speech-bubble peek-bubble side-{{dockSide}}"
+      catchtap="onOpenFromBubble"
+    >
+      <text class="bubble-msg">{{bubbleText}}</text>
+      <view class="bubble-close" catchtap="onCloseBubble">×</view>
+    </view>
+    <view class="peek-circle">
+      <image class="peek-img" src="{{spritePath}}" mode="aspectFit" />
+    </view>
   </view>
 
-  <!-- 可拖拽悬浮动画精灵 -->
+  <!-- 可拖拽、多手势悬浮动画精灵 -->
   <view
     wx:else
     class="floating-mascot {{dragging ? 'is-dragging' : ''}}"
@@ -20,7 +29,7 @@
     bindtouchend="onTouchEnd"
     bindtouchcancel="onTouchEnd"
   >
-    <!-- 主动问候气泡 -->
+    <!-- 主动问候 / 互动反馈气泡 -->
     <view
       wx:if="{{bubbleText && !drawerOpen}}"
       class="speech-bubble side-{{dockSide}}"
@@ -30,43 +39,80 @@
       <view class="bubble-close" catchtap="onCloseBubble">×</view>
     </view>
 
-    <!-- 点击爱心绽放粒子 -->
+    <!-- 粒子反馈（爱心 / 星星 / 感叹号） -->
     <text
       wx:for="{{burstHearts}}"
       wx:key="id"
       class="burst-heart"
       style="--tx: {{item.tx}}px; --ty: {{item.ty}}px;"
-    >♥</text>
+    >{{item.sym || '♥'}}</text>
 
-    <!-- 角色立绘 + 呼吸/果冻动效 -->
-    <view class="sprite-stage mood-{{effectiveMood}} {{bouncing ? 'is-bouncing' : ''}}">
+    <!-- 角色立绘 + 弹簧/拎起摆动/情绪动效 -->
+    <view
+      class="sprite-stage mood-{{effectiveMood}} {{bouncing ? 'is-bouncing' : ''}}"
+      style="transform: rotate({{dragTiltDeg}}deg);"
+    >
       <image class="sprite-img" src="{{spritePath}}" mode="aspectFit" />
       <view class="name-pill">
         <view class="status-dot mood-{{effectiveMood}}" />
         <text class="name-text">恋恋</text>
+        <text class="lv-tag">Lv.{{bondLevel}}</text>
       </view>
     </view>
   </view>
 
-  <!-- 半屏玻璃质感问答舱 -->
-  <view wx:if="{{drawerOpen && !minimized}}" class="sheet-backdrop" catchtap="onCloseDrawer">
+  <!-- 半屏智能问答舱 2.0 -->
+  <view wx:if="{{drawerOpen && !minimized}}" class="sheet-mask-wrap" catchtap="onCloseDrawer">
     <view class="lian-sheet" catchtap="noop">
-      <!-- 顶部身份栏 -->
+      <!-- 顶部身份与羁绊条 -->
       <view class="sheet-header">
         <view class="sheet-id">
           <image class="header-avatar" src="{{spritePath}}" mode="aspectFit" />
           <view class="header-info">
             <view class="header-title-row">
-              <text class="header-name">玫瑰心狐 · 恋恋</text>
+              <text class="header-name">恋恋</text>
+              <text class="bond-badge">Lv.{{bondLevel}} {{bondTitle}}</text>
               <text class="header-badge">{{moodStatusText}}</text>
             </view>
-            <text class="header-sub">不懂功能问我，委屈想哭也找我抱抱~</text>
+            <view class="affinity-track">
+              <view class="affinity-fill" style="width: {{affinityPercent}}%;" />
+            </view>
           </view>
         </view>
         <view class="header-ops">
+          <view class="op-btn {{showMemories ? 'op-btn-on' : ''}}" bindtap="onToggleMemories">🧠 {{memories.length}}</view>
           <view class="op-btn" bindtap="onResetTopic">新话题</view>
-          <view class="op-btn" bindtap="onMinimize">藏边</view>
+          <view class="op-btn" bindtap="onMinimize">探头</view>
           <view class="op-btn op-close" bindtap="onCloseDrawer">×</view>
+        </view>
+      </view>
+
+      <!-- 恋恋记忆查看抽屉（透明可删） -->
+      <view wx:if="{{showMemories}}" class="mem-drawer">
+        <view class="mem-head">
+          <text>🧠 恋恋记住的近期心事（艾宾浩斯动态强化）</text>
+          <text class="mem-close" bindtap="onToggleMemories">收起</text>
+        </view>
+        <view wx:if="{{memories.length === 0}}" class="mem-empty">
+          还没有专属记忆哦，多和我聊聊心事，我会悄悄记住你们的偏好~
+        </view>
+        <view wx:else class="mem-list">
+          <view wx:for="{{memories}}" wx:key="id" class="mem-item">
+            <text class="mem-cat">{{item.category}}</text>
+            <text class="mem-txt">{{item.summary}}</text>
+            <text class="mem-del" data-id="{{item.id}}" bindtap="onForgetMemory">×</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 4-4-4 互动呼吸引导仪式 -->
+      <view wx:if="{{breathingActive}}" class="breath-panel">
+        <view class="breath-orb" style="transform: scale({{breathingScale}});">
+          <text>{{breathingPhase}}</text>
+        </view>
+        <view class="breath-foot">
+          <text>和恋恋一起慢呼吸 · 剩余 {{breathingRemainSec}}s</text>
+          <text class="breath-stop" bindtap="stopBreathing">结束</text>
         </view>
       </view>
 
@@ -92,6 +138,23 @@
         scroll-into-view="{{scrollIntoId}}"
         scroll-with-animation
       >
+        <!-- 每日心情轻打卡条 -->
+        <view wx:if="{{needMoodCheckin}}" class="checkin-card">
+          <view class="checkin-title">今天心情怎么样？轻点一下告诉恋恋</view>
+          <view class="checkin-row">
+            <view
+              wx:for="{{moodChoices}}"
+              wx:key="score"
+              class="checkin-item"
+              data-score="{{item.score}}"
+              bindtap="onTapMoodCheckin"
+            >
+              <text class="ci-emoji">{{item.emoji}}</text>
+              <text class="ci-label">{{item.label}}</text>
+            </view>
+          </view>
+        </view>
+
         <!-- 低谷情绪关怀卡 -->
         <view wx:if="{{emotionCare}}" class="care-card">
           <text class="care-title">💗 {{emotionCare.title}}</text>
@@ -101,8 +164,8 @@
         <!-- 空状态与快捷提问 -->
         <view wx:if="{{messages.length === 0}}" class="empty-panel">
           <view class="empty-welcome">
-            <text class="empty-title">✨ 嗨~ 我是住在 AILOVE 里的恋恋！</text>
-            <text class="empty-desc">不会用「截图识图」、不知道怎么回复暧昧对象、或者单纯想找个温柔树洞，直接点下面或者发消息给我吧~</text>
+            <text class="empty-title">✨ 恋恋 2.0 情感大脑已上线</text>
+            <text class="empty-desc">摸摸我的头、戳脸蛋、长按抱抱都会有不同小反应~ 聊到心事我还能帮你一键带入工具或顺手记进情感档案哦！</text>
           </view>
           <view class="prompt-grid">
             <view
@@ -121,8 +184,22 @@
         <view wx:else class="msg-list">
           <view wx:for="{{messages}}" wx:key="id" class="msg-item msg-{{item.role}}">
             <view class="msg-bubble">
-              <text user-select>{{item.content || '恋恋正在认真组织回答...'}}</text>
+              <text user-select>{{item.content || '恋恋正在竖起耳朵认真想...'}}</text>
             </view>
+
+            <!-- 结构化行动卡片 -->
+            <view wx:if="{{item.toolCard}}" class="tool-exec-card">
+              <view class="tool-exec-tag">✨ 恋恋行动建议</view>
+              <view wx:if="{{item.toolCard.summary}}" class="tool-exec-sub">{{item.toolCard.summary}}</view>
+              <view
+                class="tool-exec-btn {{item.toolApplied ? 'is-done' : ''}}"
+                data-idx="{{index}}"
+                bindtap="onTapToolCard"
+              >
+                {{item.toolApplied ? '已记入档案 ✓' : (item.toolCard.label + ' →')}}
+              </view>
+            </view>
+
             <view wx:if="{{item.role === 'assistant' && item.content && !sending}}" class="msg-tools">
               <view class="tool-btn" data-content="{{item.content}}" bindtap="onCopyReply">复制</view>
               <view
@@ -145,7 +222,7 @@
           <input
             class="composer-input"
             value="{{inputValue}}"
-            placeholder="问恋恋：怎么识图 / 怎么回 / 抱抱我..."
+            placeholder="对恋恋说说心事，或贴一句 TA 的话..."
             confirm-type="send"
             bindinput="onInputChange"
             bindconfirm="onSendInput"
@@ -158,7 +235,7 @@
           </view>
         </view>
         <view class="footer-meta">
-          <text class="drag-hint">按住恋恋头像可拖到左/右边缘</text>
+          <text class="drag-hint">摸头 / 戳脸 / 长按抱抱 · 拖动停靠</text>
           <text class="deep-link" bindtap="onGoFullChat">转 AI 咨询深聊 →</text>
         </view>
       </view>

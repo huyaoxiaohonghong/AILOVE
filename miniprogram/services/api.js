@@ -153,6 +153,34 @@ function clearAiSession(sessionId) {
   })
 }
 
+// --- 看板娘「恋恋 2.0」情感大脑与长期记忆 ---
+function getMascotState() {
+  return request({ url: '/mascot/state', method: 'GET' })
+}
+
+function sendMascotInteract(payload) {
+  return request({ url: '/mascot/interact', method: 'POST', data: payload })
+}
+
+function submitMascotMoodCheckin(payload) {
+  return request({ url: '/mascot/mood-checkin', method: 'POST', data: payload })
+}
+
+function applyMascotProfilePatch(patch) {
+  return request({ url: '/mascot/profile-patch', method: 'POST', data: patch })
+}
+
+function getMascotMemories() {
+  return request({ url: '/mascot/memories', method: 'GET' })
+}
+
+function deleteMascotMemory(memoryId) {
+  return request({
+    url: `/mascot/memories/${encodeURIComponent(memoryId)}`,
+    method: 'DELETE',
+  })
+}
+
 module.exports = {
   getHealth,
   getPublicConfig,
@@ -182,4 +210,10 @@ module.exports = {
   sendAiChat,
   streamAiChat,
   clearAiSession,
+  getMascotState,
+  sendMascotInteract,
+  submitMascotMoodCheckin,
+  applyMascotProfilePatch,
+  getMascotMemories,
+  deleteMascotMemory,
 }

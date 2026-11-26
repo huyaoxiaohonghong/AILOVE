@@ -45,6 +45,15 @@ class ChatRequest(BaseModel):
         default=True,
         description="是否根据提问内容自动路由匹配相关知识库 Skill（或通过 /skill:slug 触发）",
     )
+    mascot_mode: bool = Field(
+        default=False,
+        description="是否启用「恋恋 2.0」情感大脑：注入羁绊记忆与流式动作编排/工具卡片协议",
+    )
+    mascot_context: str = Field(
+        default="",
+        max_length=240,
+        description="可选：当前页面或用户行为语境（如犹豫停顿/所在页面）",
+    )
 
 
 class ChatResponse(BaseModel):

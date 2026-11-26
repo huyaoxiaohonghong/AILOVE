@@ -102,6 +102,8 @@ export interface AiChatPayload {
   ephemeral_history?: Array<{ role: 'user' | 'assistant'; content: string }>
   skill_ids?: number[]
   auto_match_skills?: boolean
+  mascot_mode?: boolean
+  mascot_context?: string
 }
 
 export interface SkillCitationItem {
@@ -753,6 +755,7 @@ async function consumeAiSse(
       love_profile_injected?: boolean
       emotion_care?: EmotionCareNotice | null
       prompt_preview?: string
+      invoked_skills?: InvokedSkillMeta[]
       content?: string
       message?: string
     }
@@ -776,6 +779,7 @@ async function consumeAiSse(
         love_profile_injected: payload.love_profile_injected,
         emotion_care: payload.emotion_care,
         prompt_preview: payload.prompt_preview,
+        invoked_skills: payload.invoked_skills,
       })
     } else if (payload.event === 'fallback' && payload.content) {
       callbacks.onFallback?.(payload.content)

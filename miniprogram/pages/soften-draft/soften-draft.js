@@ -45,6 +45,24 @@ Page({
 
   onLoad() {
     this.loadMeta()
+    this.applyToolIntent()
+  },
+
+  onShow() {
+    this.applyToolIntent()
+  },
+
+  applyToolIntent() {
+    const app = getApp()
+    const intent = app && typeof app.consumeToolIntent === 'function' ? app.consumeToolIntent() : null
+    if (!intent || intent.type !== 'open_soften_draft') return
+    const patch = {}
+    if (intent.draft_message) patch.draftMessage = String(intent.draft_message).slice(0, 2000)
+    if (intent.intensity) patch.intensity = intent.intensity
+    if (Object.keys(patch).length > 0) {
+      this.setData(patch)
+      wx.showToast({ title: '恋恋已为你带入草稿 🧊', icon: 'none' })
+    }
   },
 
   onUnload() {

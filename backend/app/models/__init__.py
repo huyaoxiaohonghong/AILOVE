@@ -10,6 +10,7 @@ from app.models.invite_code import InviteCode
 from app.models.knowledge_base import KBRawSource, KBSkill, KBWikiBase, KBWikiPage
 from app.models.login_log import LoginLog
 from app.models.love_profile import UserLoveProfile
+from app.models.mascot import MascotMemory, MascotProfile
 from app.models.rbac import SysRole
 from app.models.sys_config import SysConfig
 from app.models.user import User
@@ -27,6 +28,8 @@ __all__ = [
     "AIPersona",
     "AIUsageLog",
     "UserLoveProfile",
+    "MascotProfile",
+    "MascotMemory",
     "FavoriteReply",
     "InviteCode",
     "KBWikiBase",
