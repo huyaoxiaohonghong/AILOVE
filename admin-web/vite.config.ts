@@ -31,7 +31,14 @@ export default defineConfig({
       },
     },
   },
+  esbuild: {
+    drop: ['console', 'debugger'],
+  },
   build: {
+    target: 'es2020',
+    cssCodeSplit: true,
+    sourcemap: false,
+    chunkSizeWarningLimit: 600,
     rollupOptions: {
       output: {
         manualChunks(id) {

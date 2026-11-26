@@ -1,8 +1,18 @@
+# 生产级 2C2G（2核2G）云主机优化编排：
+# 总常驻内存控制在 ~500-650MB，为系统页缓存、AI 突发流式并发与容器重建预留 1.2GB+ 安全余量。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   mysql:
     image: ${MYSQL_IMAGE:-mysql:8.0}
     container_name: ailove-mysql
     restart: unless-stopped
+    mem_limit: 520m
+    logging: *default-logging
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-ailove_root_123456}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-ailove}
@@ -16,29 +26,47 @@ services:
       - --collation-server=utf8mb4_unicode_ci
       - --default-authentication-plugin=mysql_native_password
       - --innodb-buffer-pool-size=128M
+      - --innodb-log-buffer-size=8M
+      - --innodb-redo-log-capacity=64M
+      - --innodb-flush-log-at-trx-commit=2
+      - --max-connections=60
+      - --table-open-cache=256
+      - --table-definition-cache=256
+      - --tmp-table-size=16M
+      - --max-heap-table-size=16M
       - --performance-schema=OFF
+      - --mysqlx=0
+      - --skip-log-bin
     volumes:
       - mysql_data:/var/lib/mysql
       - ./backend/sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-ailove_root_123456}"]
-      interval: 10s
+      interval: 15s
       timeout: 5s
       retries: 10
-      start_period: 20s
+      start_period: 25s
 
   redis:
     image: ${REDIS_IMAGE:-redis:7-alpine}
     container_name: ailove-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-ailove_redis_123456}
+    mem_limit: 128m
+    logging: *default-logging
+    command: >
+      redis-server
+      --appendonly yes
+      --save ""
+      --maxmemory 96mb
+      --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD:-ailove_redis_123456}
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-ailove_redis_123456}", "ping"]
-      interval: 10s
+      interval: 15s
       timeout: 5s
       retries: 10
 
@@ -51,6 +79,8 @@ services:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
     container_name: ailove-backend
     restart: unless-stopped
+    mem_limit: 560m
+    logging: *default-logging
     env_file:
       - ./backend/.env
     environment:
@@ -58,6 +88,10 @@ services:
       MYSQL_PORT: 3306
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      MYSQL_POOL_SIZE: ${MYSQL_POOL_SIZE:-5}
+      MYSQL_MAX_OVERFLOW: ${MYSQL_MAX_OVERFLOW:-8}
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-1}
+      UVICORN_MAX_CONCURRENCY: ${UVICORN_MAX_CONCURRENCY:-120}
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -67,7 +101,7 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)"]
-      interval: 15s
+      interval: 20s
       timeout: 5s
       retries: 5
       start_period: 15s
@@ -82,6 +116,8 @@ services:
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
     container_name: ailove-admin-web
     restart: unless-stopped
+    mem_limit: 96m
+    logging: *default-logging
     ports:
       - "${WEB_PORT:-80}:80"
     depends_on:
