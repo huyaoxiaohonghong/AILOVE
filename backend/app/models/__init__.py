@@ -7,6 +7,7 @@ from app.models.audit_log import AuditLog
 from app.models.base import Base
 from app.models.favorite_reply import FavoriteReply
 from app.models.invite_code import InviteCode
+from app.models.knowledge_base import KBRawSource, KBSkill, KBWikiBase, KBWikiPage
 from app.models.login_log import LoginLog
 from app.models.love_profile import UserLoveProfile
 from app.models.rbac import SysRole
@@ -28,6 +29,10 @@ __all__ = [
     "UserLoveProfile",
     "FavoriteReply",
     "InviteCode",
+    "KBWikiBase",
+    "KBRawSource",
+    "KBWikiPage",
+    "KBSkill",
     "SysRole",
     "SysConfig",
     "AuditLog",

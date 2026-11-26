@@ -16,6 +16,8 @@ Page({
     personas: [],
     selectedPersonaId: null,
     activePersona: null,
+    skills: [],
+    selectedSkillIds: [],
     conversations: [],
     historyVisible: false,
     loadingHistory: false,
@@ -91,6 +93,7 @@ Page({
       return
     }
     this.refreshLightMeta()
+    this.loadSkills()
     this.applyPendingIntent()
   },
 
@@ -105,7 +108,12 @@ Page({
   async initChatPage() {
     try {
       await auth.ensureLogin()
-      await Promise.all([this.loadPersonas(), this.loadConversations(), this.refreshLightMeta()])
+      await Promise.all([
+        this.loadPersonas(),
+        this.loadSkills(),
+        this.loadConversations(),
+        this.refreshLightMeta(),
+      ])
     } catch (_e) {
       // 网络离线时保留欢迎气泡
     }
@@ -122,6 +130,38 @@ Page({
     } catch (_e) {
       // 忽略
     }
+  },
+
+  async loadSkills() {
+    try {
+      const res = await api.getKbSkills()
+      const selected = new Set(this.data.selectedSkillIds || [])
+      const items = ((res && res.items) || []).map((s) =>
+        Object.assign({}, s, { _selected: selected.has(s.id) }),
+      )
+      this.setData({ skills: items })
+    } catch (_e) {
+      // 忽略
+    }
+  },
+
+  onSelectSkill(e) {
+    if (this.data.sending) return
+    const rawId = e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id
+    if (!rawId) {
+      const reset = (this.data.skills || []).map((s) => Object.assign({}, s, { _selected: false }))
+      this.setData({ selectedSkillIds: [], skills: reset })
+      return
+    }
+    const sid = Number(rawId)
+    const cur = new Set(this.data.selectedSkillIds || [])
+    if (cur.has(sid)) cur.delete(sid)
+    else cur.add(sid)
+    const nextIds = Array.from(cur).slice(0, 3)
+    const updated = (this.data.skills || []).map((s) =>
+      Object.assign({}, s, { _selected: nextIds.includes(s.id) }),
+    )
+    this.setData({ selectedSkillIds: nextIds, skills: updated })
   },
 
   async loadConversations() {
@@ -411,6 +451,7 @@ Page({
       [`${keyPrefix}.modelLabel`]: draft.modelLabel,
       [`${keyPrefix}.loveProfileInjected`]: draft.loveProfileInjected,
       [`${keyPrefix}.emotionCare`]: draft.emotionCare,
+      [`${keyPrefix}.invokedSkills`]: draft.invokedSkills || [],
       [`${keyPrefix}.isError`]: draft.isError,
       scrollTop: this.nextBottomScrollTop(),
     })
@@ -429,6 +470,7 @@ Page({
       modelLabel: this.data.activePersona ? this.data.activePersona.name : 'AILOVE AI',
       loveProfileInjected: false,
       emotionCare: null,
+      invokedSkills: [],
       isError: false,
     }
     const nextList = this.data.messages.concat([userMsg, aiMsg])
@@ -461,6 +503,8 @@ Page({
         timezone: 'Asia/Shanghai',
         incognito: isIncognito,
         ephemeral_history: ephemeralHistory,
+        skill_ids: this.data.selectedSkillIds || [],
+        auto_match_skills: true,
       }
 
       const handle = api.streamAiChat(payload, {
@@ -471,6 +515,7 @@ Page({
             this._pendingDraft.modelLabel = `${prefix}${meta.model || 'AI'}${meta.is_mock ? ' · 演示' : ''}`
             this._pendingDraft.loveProfileInjected = Boolean(meta.love_profile_injected)
             this._pendingDraft.emotionCare = meta.emotion_care || null
+            this._pendingDraft.invokedSkills = meta.invoked_skills || []
             if (meta.emotion_care) {
               receivedCare = true
               this.setMascotMood('comfort', 5400)

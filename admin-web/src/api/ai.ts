@@ -100,6 +100,28 @@ export interface AiChatPayload {
   use_love_profile?: boolean
   incognito?: boolean
   ephemeral_history?: Array<{ role: 'user' | 'assistant'; content: string }>
+  skill_ids?: number[]
+  auto_match_skills?: boolean
+}
+
+export interface SkillCitationItem {
+  page_id: number
+  page_path: string
+  title: string
+  page_type: string
+  score: number
+  via: string
+  excerpt: string
+}
+
+export interface InvokedSkillMeta {
+  id: number
+  slug: string
+  name: string
+  kb_id: number
+  kb_name: string
+  match_reason: string
+  citations: SkillCitationItem[]
 }
 
 export interface AiChatResult {
@@ -121,6 +143,7 @@ export interface AiChatResult {
   emotion_care?: EmotionCareNotice | null
   fallback_used?: boolean
   fallback_from?: string
+  invoked_skills?: InvokedSkillMeta[]
 }
 
 export type RelationshipStage =
@@ -660,6 +683,7 @@ export interface StreamAiMeta {
   love_profile_injected?: boolean
   emotion_care?: EmotionCareNotice | null
   prompt_preview?: string
+  invoked_skills?: InvokedSkillMeta[]
 }
 
 export interface StreamAiCallbacks {

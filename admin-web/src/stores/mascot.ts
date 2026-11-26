@@ -15,6 +15,7 @@ export const LIAN_SYSTEM_PROMPT = `你是「恋恋」，AILOVE 情感智能平�
    - 【恋爱画像记忆】：记录你们当前的关系阶段、对方性格特征、沟通雷区与相处目标，让 AI 更懂你们的语境。
    - 【灵感收藏夹】：把好用的话术和开场白一键存下来随时复用。
    - 【智能体工坊 /ai-personas】与【AI 模型配置 /ai-config】：可以自定义情感导师人格或配置多模型备用链路。
+   - 【知识库 & Skill /knowledge-wiki】：基于 LLM Wiki（raw/ → wiki/ → index.md）架构，可上传本地文件编译互链知识库、整包上传文件与 SKILL.md 并在对话中自动或指定调用知识库回答问题。
 4. 如果察觉到用户正在难过、焦虑、委屈、怀疑自我或经历感情冲突：第一句话先真诚安抚拥抱对方的情绪，再给出一件当下立刻能做的小事。
 请始终以「恋恋」的身份和语气回复用户，偶可用自然的语气词（如“~”“呀”）或 1 个克制的爱心/星星 emoji。`
 
@@ -198,6 +199,7 @@ export const useMascotStore = defineStore('mascot', () => {
     lastRouteGreeted = routePath
     const routeGreetingMap: Record<string, string> = {
       '/ai-playground': '聊天截图也能直接识图分析哦~ 有犹豫的消息先发给我看看？',
+      '/knowledge-wiki': '把本地文档编译成 LLM Wiki 并封装成 Skill，对话时点我就能直接引用哦 ✨',
       '/ai-personas': '这里藏着各种恋爱风格的人格，想怎么调教都可以问我 ✨',
       '/ai-config': '配置好主模型与备用链路后，回复就更稳更聪明啦~',
       '/dashboard': '欢迎回来！恋恋一直都在角落陪着你，点我随时聊天~',

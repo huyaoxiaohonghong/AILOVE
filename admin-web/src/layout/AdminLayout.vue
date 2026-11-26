@@ -49,6 +49,7 @@ const navGroups: NavGroup[] = [
       { path: '/ai-config', title: 'AI 模型配置', icon: 'Cpu', adminOnly: true, permission: 'ai:config:view' },
       { path: '/ai-personas', title: '智能体工坊', icon: 'MagicStick', adminOnly: true, permission: 'ai:config:view' },
       { path: '/ai-playground', title: 'AI 调试台', icon: 'ChatDotRound', adminOnly: false, permission: 'ai:chat' },
+      { path: '/knowledge-wiki', title: '知识库 & Skill', icon: 'Collection', adminOnly: false, permission: 'ai:chat' },
     ],
   },
   {

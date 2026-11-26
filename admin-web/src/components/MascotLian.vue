@@ -15,7 +15,9 @@ import {
   createFavoriteReply,
   streamAiChat,
   type EmotionCareNotice,
+  type InvokedSkillMeta,
 } from '@/api/ai'
+import { fetchCallableSkills, type KBSkillItem } from '@/api/kb'
 import MascotLianFigure from '@/components/MascotLianFigure.vue'
 import { LIAN_SYSTEM_PROMPT, useMascotStore } from '@/stores/mascot'
 
@@ -24,6 +26,7 @@ interface CabinMessage {
   role: 'user' | 'assistant'
   content: string
   favorited?: boolean
+  invokedSkills?: InvokedSkillMeta[]
   actionHint?: {
     label: string
     path: string
@@ -82,7 +85,18 @@ const sending = ref(false)
 const messages = ref<CabinMessage[]>([])
 const emotionCare = ref<EmotionCareNotice | null>(null)
 const chatScrollRef = ref<HTMLElement | null>(null)
+const callableSkills = ref<KBSkillItem[]>([])
+const selectedSkillId = ref<number | null>(null)
 let abortController: AbortController | null = null
+
+async function loadCallableSkills() {
+  try {
+    const res = await fetchCallableSkills()
+    callableSkills.value = res.items
+  } catch {
+    // 忽略未配置或离线异常
+  }
+}
 
 const clampedTop = computed(() => {
   const maxTop = Math.max(72, viewportHeight.value - AVATAR_H - 18)
@@ -247,6 +261,9 @@ function scrollToBottom() {
 
 function inferActionHint(prompt: string, reply: string): CabinMessage['actionHint'] {
   const combined = `${prompt}\n${reply}`
+  if (/知识库|wiki|skill|整包|上传文档/i.test(combined)) {
+    return { label: '去知识库 & Skill 工坊', path: '/knowledge-wiki' }
+  }
   if (/智能体|人格|persona/i.test(combined)) {
     return { label: '去智能体工坊看看', path: '/ai-personas' }
   }
@@ -347,6 +364,8 @@ async function sendPrompt(rawText?: string) {
         system_prompt: LIAN_SYSTEM_PROMPT,
         temperature: 0.75,
         use_love_profile: true,
+        skill_ids: selectedSkillId.value ? [selectedSkillId.value] : [],
+        auto_match_skills: true,
         ephemeral_history: messages.value
           .slice(0, -2)
           .slice(-6)
@@ -356,6 +375,9 @@ async function sendPrompt(rawText?: string) {
         onMeta: (meta) => {
           if (meta.session_id) {
             mascotStore.setSessionId(meta.session_id)
+          }
+          if (meta.invoked_skills?.length) {
+            assistantMsg.invokedSkills = meta.invoked_skills
           }
           if (meta.emotion_care) {
             receivedCare = true
@@ -422,6 +444,15 @@ watch(
     }, 650)
   },
   { immediate: true },
+)
+
+watch(
+  () => mascotStore.drawerOpen,
+  (isOpen) => {
+    if (isOpen) {
+      void loadCallableSkills()
+    }
+  },
 )
 
 onMounted(() => {
@@ -565,6 +596,29 @@ onBeforeUnmount(() => {
         </header>
 
         <div ref="chatScrollRef" class="cabin-body">
+          <!-- Compact Knowledge Skill Bar -->
+          <div v-if="callableSkills.length > 0" class="cabin-skill-bar">
+            <span class="skill-bar-label">🧩 知识库 Skill：</span>
+            <button
+              type="button"
+              class="skill-pill"
+              :class="{ 'is-active': selectedSkillId === null }"
+              @click="selectedSkillId = null"
+            >
+              自动匹配
+            </button>
+            <button
+              v-for="sk in callableSkills.slice(0, 6)"
+              :key="sk.id"
+              type="button"
+              class="skill-pill"
+              :class="{ 'is-active': selectedSkillId === sk.id }"
+              @click="selectedSkillId = selectedSkillId === sk.id ? null : sk.id"
+            >
+              {{ sk.name }}
+            </button>
+          </div>
+
           <!-- Warm Emotion Guardrail Care Card -->
           <div v-if="emotionCare" class="cabin-care-card">
             <div class="care-title">💗 {{ emotionCare.title }}</div>
@@ -632,6 +686,13 @@ onBeforeUnmount(() => {
                   </div>
                 </template>
                 <span v-else class="typing-dots">恋恋正在组织甜美又靠谱的回答...</span>
+              </div>
+
+              <!-- Invoked Knowledge Skill Citations -->
+              <div v-if="msg.invokedSkills?.length" class="cabin-skill-cites">
+                <span v-for="sk in msg.invokedSkills" :key="sk.id" class="skill-cite-tag">
+                  📚 {{ sk.name }}：{{ sk.citations.map((c) => c.title).slice(0, 3).join(' · ') || '已命中' }}
+                </span>
               </div>
 
               <!-- Assistant Actions -->
@@ -997,6 +1058,55 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.cabin-skill-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: #fff4f8;
+  border: 1px dashed rgba(235, 95, 138, 0.28);
+}
+
+.skill-bar-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #a13561;
+}
+
+.skill-pill {
+  border: 1px solid rgba(235, 95, 138, 0.26);
+  background: #ffffff;
+  color: #7f294b;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.skill-pill.is-active {
+  background: #e1467b;
+  border-color: #e1467b;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.cabin-skill-cites {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.skill-cite-tag {
+  font-size: 10.5px;
+  color: #9d174d;
+  background: #fff1f5;
+  border: 1px solid rgba(235, 95, 138, 0.22);
+  border-radius: 999px;
+  padding: 2px 8px;
 }
 
 .cabin-care-card {

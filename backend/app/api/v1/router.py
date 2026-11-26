@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth, captcha, health, system
+from app.api.v1 import auth, captcha, health, knowledge_base, system
 from app.api.v1.admin import accounts as admin_accounts
 from app.api.v1.admin import ai_configs as admin_ai_configs
 from app.api.v1.admin import ai_personas as admin_ai_personas
@@ -49,3 +49,6 @@ api_v1_router.include_router(miniapp_router)
 
 # AI / LangChain 路由 (/api/v1/ai/*)
 api_v1_router.include_router(ai_chat.router)
+
+# LLM Wiki 知识库与 Skill 路由 (/api/v1/kb/*)
+api_v1_router.include_router(knowledge_base.router)

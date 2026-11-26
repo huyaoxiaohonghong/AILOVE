@@ -35,6 +35,7 @@ import {
   type EmotionCareNotice,
   type FavoriteCategory,
   type FavoriteReplyItem,
+  type InvokedSkillMeta,
   type LoveProfilePresets,
   type RelationshipStage,
   type ReplyHelperPresets,
@@ -43,6 +44,7 @@ import {
   type SoftenIntensity,
   type UserLoveProfile,
 } from '@/api/ai'
+import { fetchCallableSkills, fileKbInsight, type KBSkillItem } from '@/api/kb'
 import { decodeUtf8Base64, renderMarkdown } from '@/utils/markdown'
 import { useMascotStore } from '@/stores/mascot'
 
@@ -55,6 +57,8 @@ interface ChatBubble {
   tokenUsage?: number
   loveProfileInjected?: boolean
   emotionCare?: EmotionCareNotice | null
+  invokedSkills?: InvokedSkillMeta[]
+  insightFiled?: boolean
   isError?: boolean
 }
 
@@ -114,6 +118,39 @@ const DEFAULT_REPLY_PRESETS: ReplyHelperPresets = {
 
 const route = useRoute()
 const mascotStore = useMascotStore()
+
+const callableSkills = ref<KBSkillItem[]>([])
+const selectedSkillIds = ref<number[]>([])
+
+async function loadCallableSkills() {
+  try {
+    const res = await fetchCallableSkills()
+    callableSkills.value = res.items
+    const qSkill = Number(route.query.skill_id)
+    if (Number.isFinite(qSkill) && qSkill > 0 && res.items.some((s) => s.id === qSkill)) {
+      selectedSkillIds.value = [qSkill]
+    }
+  } catch {
+    // 忽略
+  }
+}
+
+async function handleFileInsightToWiki(msg: ChatBubble) {
+  const targetSkill = msg.invokedSkills?.[0]
+  if (!targetSkill || !msg.content.trim() || msg.insightFiled) return
+  try {
+    const titlePreview = msg.content.replace(/[#>*`\n]/g, ' ').trim().slice(0, 28) || '对话洞察沉淀'
+    await fileKbInsight(targetSkill.kb_id, {
+      title: `洞察：${titlePreview}`,
+      content: msg.content.trim(),
+    })
+    msg.insightFiled = true
+    mascotStore.triggerHappy('这条好回答已经写回 Wiki 啦 📖', 2400)
+    ElMessage.success(`已将本次结论回流写入「${targetSkill.kb_name}」wiki/insights/`)
+  } catch {
+    // 非知识库所有者或网络异常时提示由 request 拦截器处理
+  }
+}
 
 function syncMascotOutcome(assistantMsg: ChatBubble, happyTip: string) {
   mascotStore.setSpeaking(false)
@@ -735,6 +772,8 @@ async function sendPromptText(text: string, appendUserBubble = true) {
       timezone: clientTz,
       incognito: incognitoMode.value,
       ephemeral_history: ephemeralHist,
+      skill_ids: selectedSkillIds.value,
+      auto_match_skills: true,
     }
 
     if (useStream.value) {
@@ -746,6 +785,7 @@ async function sendPromptText(text: string, appendUserBubble = true) {
             sessionId.value = meta.session_id
             assistantMsg.loveProfileInjected = Boolean(meta.love_profile_injected)
             assistantMsg.emotionCare = meta.emotion_care ?? null
+            assistantMsg.invokedSkills = meta.invoked_skills || []
             if (meta.emotion_care) {
               mascotStore.triggerComfort('恋恋给你抱抱，难过时先深呼吸一下~', 5400)
             }
@@ -786,6 +826,7 @@ async function sendPromptText(text: string, appendUserBubble = true) {
       assistantMsg.tokenUsage = res.token_usage || undefined
       assistantMsg.loveProfileInjected = Boolean(res.love_profile_injected)
       assistantMsg.emotionCare = res.emotion_care ?? null
+      assistantMsg.invokedSkills = res.invoked_skills || []
       const pPrefix = res.persona_name ? `${res.persona_name} · ` : ''
       const fbSuffix = res.fallback_used ? ' · 自动容灾接管' : ''
       assistantMsg.modelLabel = `${pPrefix}${res.config_name || 'AI'} (${res.model})${res.is_mock ? ' · 演示' : ''}${fbSuffix}`
@@ -924,6 +965,7 @@ async function handleSubmitReplyHelper() {
       assistantMsg.tokenUsage = res.token_usage || undefined
       assistantMsg.loveProfileInjected = Boolean(res.love_profile_injected)
       assistantMsg.emotionCare = res.emotion_care ?? null
+      assistantMsg.invokedSkills = res.invoked_skills || []
       const pPrefix = res.persona_name ? `${res.persona_name} · ` : ''
       const fbSuffix = res.fallback_used ? ' · 自动容灾接管' : ''
       assistantMsg.modelLabel = `${pPrefix}${res.config_name || 'AI'} (${res.model})${res.is_mock ? ' · 演示' : ''}${fbSuffix}`
@@ -1046,6 +1088,7 @@ async function handleSubmitSoftenDraft() {
       assistantMsg.tokenUsage = res.token_usage || undefined
       assistantMsg.loveProfileInjected = Boolean(res.love_profile_injected)
       assistantMsg.emotionCare = res.emotion_care ?? null
+      assistantMsg.invokedSkills = res.invoked_skills || []
       const pPrefix = res.persona_name ? `${res.persona_name} · ` : ''
       const fbSuffix = res.fallback_used ? ' · 自动容灾接管' : ''
       assistantMsg.modelLabel = `${pPrefix}${res.config_name || 'AI'} (${res.model})${res.is_mock ? ' · 演示' : ''}${fbSuffix}`
@@ -1132,6 +1175,7 @@ onMounted(async () => {
     loadQuota(),
     loadLoveProfile(),
     loadReplyPresets(),
+    loadCallableSkills(),
   ])
   const qSid = typeof route.query.session_id === 'string' ? route.query.session_id.trim() : ''
   if (qSid) {
@@ -1190,6 +1234,22 @@ onBeforeUnmount(() => {
         <el-button plain size="small" @click="sidebarVisible = !sidebarVisible">
           {{ sidebarVisible ? '收起历史栏' : '展开历史栏' }}
         </el-button>
+        <el-select
+          v-if="callableSkills.length > 0"
+          v-model="selectedSkillIds"
+          multiple
+          collapse-tags
+          clearable
+          placeholder="🧩 自动匹配 / 指定 Skill"
+          style="width: 228px"
+        >
+          <el-option
+            v-for="sk in callableSkills"
+            :key="sk.id"
+            :label="`📚 ${sk.name} (/skill:${sk.slug})`"
+            :value="sk.id"
+          />
+        </el-select>
         <el-select
           v-model="selectedConfigId"
           placeholder="选择模型配置"
@@ -1397,11 +1457,41 @@ onBeforeUnmount(() => {
                 </div>
               </div>
 
+              <!-- 调用的知识库 Skill 与 Wiki 词条溯源 -->
+              <div
+                v-if="msg.role === 'assistant' && msg.invokedSkills?.length"
+                class="skill-citation-box"
+              >
+                <div v-for="sk in msg.invokedSkills" :key="sk.id" class="skill-cite-row">
+                  <el-tag size="small" type="success" effect="plain">
+                    🧩 已调用 Skill · {{ sk.name }} (/skill:{{ sk.slug }})
+                  </el-tag>
+                  <div v-if="sk.citations?.length" class="skill-cite-chips">
+                    <span
+                      v-for="c in sk.citations"
+                      :key="`${c.page_path}-${c.title}`"
+                      class="skill-cite-chip"
+                      :title="c.excerpt"
+                    >
+                      📖 {{ c.title }} ({{ c.page_path }})
+                    </span>
+                  </div>
+                </div>
+              </div>
+
               <div v-if="msg.role === 'assistant' && msg.content" class="bubble-actions">
                 <span v-if="msg.tokenUsage" class="bubble-token mono-num">
                   Tokens · {{ msg.tokenUsage }}
                 </span>
                 <div class="bubble-btns">
+                  <button
+                    v-if="msg.invokedSkills?.length && !sending"
+                    type="button"
+                    class="mini-action-btn"
+                    @click="handleFileInsightToWiki(msg)"
+                  >
+                    {{ msg.insightFiled ? '✅ 已回流 Wiki' : '📝 沉淀回 Wiki' }}
+                  </button>
                   <button type="button" class="mini-action-btn" @click="handleFavoriteBubble(msg)">
                     ⭐ 收藏
                   </button>
@@ -2777,5 +2867,37 @@ onBeforeUnmount(() => {
   margin-top: 6px;
   font-size: 12px;
   color: var(--ailove-ink-muted);
+}
+
+.skill-citation-box {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.skill-cite-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.skill-cite-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.skill-cite-chip {
+  font-size: 11.5px;
+  color: #166534;
+  background: #ffffff;
+  border: 1px solid #86efac;
+  border-radius: 999px;
+  padding: 2px 8px;
 }
 </style>

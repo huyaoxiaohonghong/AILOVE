@@ -64,6 +64,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'AI 调试台', icon: 'ChatDotRound', permission: 'ai:chat' },
       },
       {
+        path: 'knowledge-wiki',
+        name: 'KnowledgeWiki',
+        component: () => import('@/views/kb/KnowledgeWikiView.vue'),
+        meta: { title: '知识库 & Skill', icon: 'Collection', permission: 'ai:chat' },
+      },
+      {
         path: 'logs',
         name: 'Logs',
         component: () => import('@/views/logs/LogsView.vue'),

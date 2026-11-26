@@ -50,6 +50,28 @@
     🕵️ 无痕倾诉模式：本轮内容绝不存入云端历史与情感手账，退出即销毁
   </view>
 
+  <!-- 知识库 Skill 快捷挂载条 -->
+  <scroll-view wx:if="{{skills.length > 0}}" class="skill-scroll" scroll-x="true" enable-flex="true">
+    <view class="skill-row">
+      <view
+        class="sk-chip {{selectedSkillIds.length === 0 ? 'sk-chip-active' : ''}}"
+        data-id=""
+        bindtap="onSelectSkill"
+      >
+        🧩 自动匹配 Skill
+      </view>
+      <view
+        wx:for="{{skills}}"
+        wx:key="id"
+        class="sk-chip {{item._selected ? 'sk-chip-active' : ''}}"
+        data-id="{{item.id}}"
+        bindtap="onSelectSkill"
+      >
+        📚 {{item.name}}
+      </view>
+    </view>
+  </scroll-view>
+
   <!-- 对话消息滚动区 -->
   <scroll-view
     class="chat-scroll"
@@ -88,6 +110,26 @@
           <!-- 主回复正文 -->
           <view class="bubble-text">
             <text user-select="true">{{item.content || (item.reasoning ? '正在整理回复...' : '正在倾听与思考中...')}}</text>
+          </view>
+
+          <!-- 知识库 Skill 引用溯源 -->
+          <view
+            wx:if="{{item.role === 'assistant' && item.invokedSkills && item.invokedSkills.length > 0}}"
+            class="skill-cites-box"
+          >
+            <view wx:for="{{item.invokedSkills}}" wx:for-item="sk" wx:key="id" class="skill-cite-item">
+              <text class="skill-cite-head">🧩 已调用 Skill · {{sk.name}}</text>
+              <view wx:if="{{sk.citations && sk.citations.length > 0}}" class="skill-cite-tags">
+                <text
+                  wx:for="{{sk.citations}}"
+                  wx:for-item="c"
+                  wx:key="title"
+                  class="skill-cite-tag"
+                >
+                  📖 {{c.title}}
+                </text>
+              </view>
+            </view>
           </view>
 
           <!-- 情绪关怀护栏暖心卡片 -->

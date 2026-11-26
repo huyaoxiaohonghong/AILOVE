@@ -77,6 +77,20 @@ PERMISSION_DEFS: tuple[PermissionDef, ...] = (
         description="新增/编辑/删除模型配置、设置默认模型及连通性测试",
     ),
     PermissionDef(
+        code="kb:view",
+        group="kb",
+        group_label="知识库与 Skill",
+        label="查看全部知识库与 Skill",
+        description="在后台管理视角查看与巡检平台全部知识库和 Skill 包",
+    ),
+    PermissionDef(
+        code="kb:manage",
+        group="kb",
+        group_label="知识库与 Skill",
+        label="管理平台知识库与 Skill",
+        description="管理平台级知识库、编译入库、发布公开 Skill 与整包导入导出",
+    ),
+    PermissionDef(
         code="system:config:view",
         group="system",
         group_label="系统配置中心",

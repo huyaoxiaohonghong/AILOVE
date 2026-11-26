@@ -36,6 +36,15 @@ class ChatRequest(BaseModel):
         max_length=12,
         description="无痕模式下的本地临时多轮上下文",
     )
+    skill_ids: list[int] = Field(
+        default_factory=list,
+        max_length=3,
+        description="显式指定调用的知识库 Skill ID 列表（最多 3 个）",
+    )
+    auto_match_skills: bool = Field(
+        default=True,
+        description="是否根据提问内容自动路由匹配相关知识库 Skill（或通过 /skill:slug 触发）",
+    )
 
 
 class ChatResponse(BaseModel):
@@ -57,6 +66,7 @@ class ChatResponse(BaseModel):
     emotion_care: dict[str, Any] | None = None
     fallback_used: bool = False
     fallback_from: str = ""
+    invoked_skills: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ConversationUpdateRequest(BaseModel):

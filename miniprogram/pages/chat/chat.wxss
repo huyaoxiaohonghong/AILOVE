@@ -519,3 +519,70 @@
   font-size: 22rpx;
   color: #dc2626;
 }
+
+.skill-scroll {
+  width: 100%;
+  white-space: nowrap;
+  padding: 6rpx 24rpx 12rpx;
+  box-sizing: border-box;
+  background: #ffffff;
+  border-bottom: 1rpx solid #f3e4e9;
+}
+
+.skill-row {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.sk-chip {
+  flex-shrink: 0;
+  padding: 8rpx 20rpx;
+  border-radius: 999rpx;
+  background: #f0fdf4;
+  border: 1rpx solid #bbf7d0;
+  color: #166534;
+  font-size: 22rpx;
+}
+
+.sk-chip-active {
+  background: #16a34a;
+  border-color: #16a34a;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.skill-cites-box {
+  margin-top: 14rpx;
+  padding: 12rpx 14rpx;
+  border-radius: 16rpx;
+  background: #f0fdf4;
+  border: 1rpx solid #bbf7d0;
+}
+
+.skill-cite-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.skill-cite-head {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: #166534;
+}
+
+.skill-cite-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8rpx;
+}
+
+.skill-cite-tag {
+  font-size: 20rpx;
+  padding: 4rpx 12rpx;
+  border-radius: 999rpx;
+  background: #ffffff;
+  border: 1rpx solid #86efac;
+  color: #15803d;
+}

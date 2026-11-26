@@ -391,6 +391,7 @@ def _build_sse_response(
             "incognito": bool(meta.get("incognito", False)),
             "love_profile_injected": bool(meta.get("love_profile_injected", False)),
             "emotion_care": meta.get("emotion_care"),
+            "invoked_skills": meta.get("invoked_skills") or [],
         }
         if user_message_preview is not None:
             meta_payload["prompt_preview"] = user_message_preview

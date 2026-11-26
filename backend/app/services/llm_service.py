@@ -23,6 +23,7 @@ from app.services import (
     ai_persona_service,
     ai_usage_service,
     alert_service,
+    kb_wiki_service,
     love_profile_service,
     sys_config_service,
 )
@@ -163,10 +164,28 @@ class LLMService:
             messages.append(HumanMessage(content=user_input))
         return messages
 
-    def _build_mock_reply(self, cfg: RuntimeAIConfig, user_message: str, image_count: int = 0) -> str:
+    def _build_mock_reply(
+        self,
+        cfg: RuntimeAIConfig,
+        user_message: str,
+        image_count: int = 0,
+        invoked_skills: list[dict[str, Any]] | None = None,
+    ) -> str:
         img_note = f"（含 {image_count} 张微信聊天截图预览）" if image_count > 0 else ""
+        skill_note = ""
+        if invoked_skills:
+            parts: list[str] = []
+            for sk in invoked_skills:
+                cites = sk.get("citations") or []
+                cite_str = "、".join(f"[{c['title']}]" for c in cites[:4]) or "暂无匹配词条"
+                first_excerpt = cites[0].get("excerpt", "") if cites else ""
+                parts.append(
+                    f"- Skill「{sk['name']}」(/skill:{sk['slug']}) 命中词条：{cite_str}"
+                    + (f"\n  摘要：{first_excerpt}" if first_excerpt else "")
+                )
+            skill_note = "\n\n【已检索 LLM Wiki 知识库摘要】\n" + "\n".join(parts)
         return (
-            f"【{cfg.name} · 演示回复】已收到你的消息{img_note}：「{user_message}」。\n"
+            f"【{cfg.name} · 演示回复】已收到你的消息{img_note}：「{user_message}」。{skill_note}\n\n"
             f"当前模型配置（{cfg.provider} / {cfg.model_name}）尚未填写 API Key，系统自动以演示模式响应。\n"
             "请登录管理后台 →「AI 模型配置」填入 DeepSeek API Key 并测试连通后，"
             "即可实时切换至真实大模型（无需重启服务）。"
@@ -863,6 +882,15 @@ class LLMService:
                 extra_system_instruction=extra_system_instruction,
             )
         )
+        skill_blocks, invoked_skills = await kb_wiki_service.resolve_and_execute_skills(
+            req.message,
+            owner_scope=owner,
+            role=role,
+            skill_ids=req.skill_ids,
+            auto_match_skills=req.auto_match_skills,
+        )
+        if skill_blocks:
+            extra_blocks.extend(skill_blocks)
         is_incognito = bool(req.incognito)
         if is_incognito:
             session_id = (req.session_id or "").strip() or f"incognito_{uuid.uuid4().hex[:12]}"
@@ -886,7 +914,12 @@ class LLMService:
         t0 = time.perf_counter()
 
         if is_mock:
-            reply = self._build_mock_reply(cfg, req.message, image_count=len(images or []))
+            reply = self._build_mock_reply(
+                cfg,
+                req.message,
+                image_count=len(images or []),
+                invoked_skills=invoked_skills,
+            )
         else:
             adapter, llm = self._build_llm(cfg, temperature, streaming=False)
             messages = self._build_messages(
@@ -1038,6 +1071,7 @@ class LLMService:
             emotion_care=emotion_care,
             fallback_used=fallback_used,
             fallback_from=fallback_from,
+            invoked_skills=invoked_skills,
         )
 
     async def stream_chat(
@@ -1070,6 +1104,15 @@ class LLMService:
                 extra_system_instruction=extra_system_instruction,
             )
         )
+        skill_blocks, invoked_skills = await kb_wiki_service.resolve_and_execute_skills(
+            req.message,
+            owner_scope=owner,
+            role=role,
+            skill_ids=req.skill_ids,
+            auto_match_skills=req.auto_match_skills,
+        )
+        if skill_blocks:
+            extra_blocks.extend(skill_blocks)
         is_incognito = bool(req.incognito)
         if is_incognito:
             session_id = (req.session_id or "").strip() or f"incognito_{uuid.uuid4().hex[:12]}"
@@ -1090,7 +1133,12 @@ class LLMService:
             active_cfg = cfg
             t0 = time.perf_counter()
             if not cfg.is_configured:
-                mock_text = self._build_mock_reply(cfg, req.message, image_count=len(images or []))
+                mock_text = self._build_mock_reply(
+                    cfg,
+                    req.message,
+                    image_count=len(images or []),
+                    invoked_skills=invoked_skills,
+                )
                 chunk_size = 8
                 for i in range(0, len(mock_text), chunk_size):
                     piece = mock_text[i : i + chunk_size]
@@ -1264,6 +1312,7 @@ class LLMService:
             "love_profile_injected": love_profile_injected,
             "emotion_care": emotion_care,
             "incognito": is_incognito,
+            "invoked_skills": invoked_skills,
         }
         return session_id, cfg, meta, _generator()
 

@@ -32,6 +32,10 @@ function getPersonas(category) {
   return request({ url: `/ai/personas${qs}`, method: 'GET' })
 }
 
+function getKbSkills() {
+  return request({ url: '/kb/skills', method: 'GET' })
+}
+
 function getMyQuota() {
   return request({ url: '/ai/quota', method: 'GET' })
 }
@@ -156,6 +160,7 @@ module.exports = {
   updateUserProfile,
   verifyInviteCode,
   getPersonas,
+  getKbSkills,
   getMyQuota,
   getConversations,
   getConversationMessages,
