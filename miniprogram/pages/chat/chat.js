@@ -5,9 +5,9 @@ const env = require('../../config/env')
 const WELCOME_BUBBLE = {
   id: 1,
   role: 'assistant',
-  modelLabel: 'AILOVE 恋爱情感助手',
+  modelLabel: 'AILOVE 恋爱助手',
   content:
-    '你好呀！把你当下的心动、困惑或委屈都告诉我吧。\n\n• 顶部可随时切换 5 位专属恋爱导师\n• 点击「帮我回消息」可直接粘贴 TA 的原话拆解潜台词\n• 开启「情感档案」后，每次对话都会自动记住你的恋爱背景',
+    '你好呀！把你当下的心动、困惑或委屈都告诉我吧。\n点击左上角可随时切换 5 位专属恋爱导师，或直接挑下面的快捷功能开始。',
 }
 
 Page({
@@ -20,14 +20,13 @@ Page({
     selectedSkillIds: [],
     conversations: [],
     historyVisible: false,
+    modeSheetVisible: false,
     loadingHistory: false,
     loveProfileActive: false,
     loveProfileStage: '',
-    quotaText: '',
     inputValue: '',
     sending: false,
     incognitoMode: false,
-    mascotMood: '',
     scrollTop: 0,
     scrollToId: '',
     messages: [WELCOME_BUBBLE],
@@ -36,26 +35,11 @@ Page({
   _streamHandle: null,
   _flushTimer: null,
   _pendingDraft: null,
-  _mascotTimer: null,
   _initialized: false,
   _lastEnvKey: '',
   _scrollTick: 0,
 
   noop() {},
-
-  setMascotMood(mood, resetMs) {
-    if (this._mascotTimer) {
-      clearTimeout(this._mascotTimer)
-      this._mascotTimer = null
-    }
-    this.setData({ mascotMood: mood || '' })
-    if (mood && resetMs > 0) {
-      this._mascotTimer = setTimeout(() => {
-        this.setData({ mascotMood: '' })
-        this._mascotTimer = null
-      }, resetMs)
-    }
-  },
 
   nextBottomScrollTop() {
     this._scrollTick += 1
@@ -78,7 +62,6 @@ Page({
         conversations: [],
         loveProfileActive: false,
         loveProfileStage: '',
-        quotaText: '',
       })
       this.initChatPage()
       return
@@ -88,7 +71,6 @@ Page({
         conversations: [],
         loveProfileActive: false,
         loveProfileStage: '',
-        quotaText: '',
       })
       return
     }
@@ -99,10 +81,6 @@ Page({
 
   onUnload() {
     this.stopStreamSilently()
-    if (this._mascotTimer) {
-      clearTimeout(this._mascotTimer)
-      this._mascotTimer = null
-    }
   },
 
   async initChatPage() {
@@ -175,24 +153,12 @@ Page({
 
   async refreshLightMeta() {
     try {
-      const [lpRes, quotaRes] = await Promise.all([
-        api.getLoveProfile().catch(() => null),
-        api.getMyQuota().catch(() => null),
-      ])
+      const lpRes = await api.getLoveProfile().catch(() => null)
       const lp = lpRes && lpRes.profile
       const active = Boolean(lp && lp.is_configured && lp.auto_inject)
-      let quotaText = ''
-      if (quotaRes) {
-        if (quotaRes.is_exempt) {
-          quotaText = `今日 ${quotaRes.requests_used} 次`
-        } else if (quotaRes.requests_limit > 0) {
-          quotaText = `剩 ${quotaRes.requests_remaining}/${quotaRes.requests_limit}`
-        }
-      }
       this.setData({
         loveProfileActive: active,
         loveProfileStage: (lp && lp.relationship_stage_label) || '',
-        quotaText,
       })
     } catch (_e) {
       // 忽略
@@ -205,6 +171,7 @@ Page({
       selectedPersonaId: matched ? matched.id : null,
       activePersona: matched,
     })
+    return matched
   },
 
   async applyPendingIntent() {
@@ -236,12 +203,9 @@ Page({
 
   resetToNewChat(personaId) {
     this.stopStreamSilently()
-    if (personaId !== undefined) {
-      this.syncActivePersona(personaId)
-    }
-    const p = this.data.activePersona
-    const greet = p
-      ? `${p.avatar_emoji || '💘'} 你好，我是「${p.name}」。${p.description || '说说你想聊的心事吧。'}`
+    const matched = personaId !== undefined ? this.syncActivePersona(personaId) : this.data.activePersona
+    const greet = matched
+      ? `${matched.avatar_emoji || '💘'} 你好，我是「${matched.name}」。${matched.description || '说说你想聊的心事吧。'}`
       : '已开启全新会话，把你的想法、困惑或对方说的话发给我吧。'
     this.setData({
       sessionId: '',
@@ -249,18 +213,29 @@ Page({
         {
           id: Date.now(),
           role: 'assistant',
-          modelLabel: p ? p.name : 'AILOVE 恋爱情感助手',
+          modelLabel: matched ? matched.name : 'AILOVE 恋爱助手',
           content: greet,
         },
       ],
     })
   },
 
+  onOpenModeSheet() {
+    this.setData({ modeSheetVisible: true })
+  },
+
+  onCloseModeSheet() {
+    this.setData({ modeSheetVisible: false })
+  },
+
   onSelectPersona(e) {
     if (this.data.sending) return
     const rawId = e.currentTarget.dataset.id
     const pid = rawId ? Number(rawId) : null
-    this.syncActivePersona(pid)
+    const matched = this.syncActivePersona(pid)
+    if (!this.data.sessionId && this.data.messages.length <= 1) {
+      this.resetToNewChat(matched ? matched.id : null)
+    }
   },
 
   onNewChatTap() {
@@ -293,14 +268,14 @@ Page({
     try {
       const detail = await api.getConversationMessages(sessionId)
       this.syncActivePersona(detail.persona_id || null)
-      const labelPrefix = detail.persona_name ? `${detail.persona_name} · ` : ''
+      const assistantLabel = detail.persona_name || 'AILOVE 恋爱助手'
       const mapped = (detail.messages || [])
         .filter((m) => m.role === 'user' || m.role === 'assistant')
         .map((m, idx) => ({
           id: m.id || idx + 1,
           role: m.role,
           content: m.content,
-          modelLabel: m.role === 'assistant' ? `${labelPrefix}${detail.model_name || 'AI'}` : '',
+          modelLabel: m.role === 'assistant' ? assistantLabel : '',
         }))
       const list = mapped.length > 0 ? mapped : [WELCOME_BUBBLE]
       const lastId = list[list.length - 1].id
@@ -352,7 +327,8 @@ Page({
     })
   },
 
-  goLoveProfile() {
+  onGoLoveProfileFromSheet() {
+    this.setData({ modeSheetVisible: false })
     wx.navigateTo({ url: '/pages/love-profile/love-profile' })
   },
 
@@ -364,13 +340,16 @@ Page({
     wx.navigateTo({ url: '/pages/soften-draft/soften-draft' })
   },
 
-  onToggleIncognito() {
+  onToggleIncognito(e) {
     if (this.data.sending) return
-    const next = !this.data.incognitoMode
+    const next =
+      e && e.detail && typeof e.detail.value === 'boolean'
+        ? e.detail.value
+        : !this.data.incognitoMode
     this.setData({ incognitoMode: next })
     if (next) {
       this.resetToNewChat(this.data.selectedPersonaId)
-      wx.showToast({ title: '已开启无痕倾诉，本轮不存记录', icon: 'none' })
+      wx.showToast({ title: '已开启无痕倾诉', icon: 'none' })
     } else {
       wx.showToast({ title: '已退出无痕模式', icon: 'none' })
     }
@@ -431,6 +410,7 @@ Page({
         [`${keyPrefix}.modelLabel`]: draft.modelLabel,
         [`${keyPrefix}.loveProfileInjected`]: draft.loveProfileInjected,
         [`${keyPrefix}.emotionCare`]: draft.emotionCare,
+        [`${keyPrefix}.invokedSkills`]: draft.invokedSkills || [],
         [`${keyPrefix}.isError`]: draft.isError,
         scrollTop: this.nextBottomScrollTop(),
       })
@@ -460,6 +440,7 @@ Page({
   async sendPrompt(content) {
     if (!content || this.data.sending) return
 
+    const personaDisplay = this.data.activePersona ? this.data.activePersona.name : 'AILOVE 恋爱助手'
     const userMsg = { id: Date.now(), role: 'user', content }
     const aiMsg = {
       id: Date.now() + 1,
@@ -467,7 +448,7 @@ Page({
       content: '',
       reasoning: '',
       reasoningOpen: false,
-      modelLabel: this.data.activePersona ? this.data.activePersona.name : 'AILOVE AI',
+      modelLabel: personaDisplay,
       loveProfileInjected: false,
       emotionCare: null,
       invokedSkills: [],
@@ -483,9 +464,7 @@ Page({
       scrollToId: 'chat-bottom-anchor',
       scrollTop: this.nextBottomScrollTop(),
     })
-    this.setMascotMood('thinking', 0)
 
-    let receivedCare = false
     try {
       await auth.ensureLogin()
       const isIncognito = Boolean(this.data.incognitoMode)
@@ -511,21 +490,17 @@ Page({
         onMeta: (meta) => {
           this.setData({ sessionId: meta.session_id })
           if (this._pendingDraft) {
-            const prefix = meta.persona_name ? `${meta.persona_name} · ` : ''
-            this._pendingDraft.modelLabel = `${prefix}${meta.model || 'AI'}${meta.is_mock ? ' · 演示' : ''}`
+            const label = meta.persona_name || personaDisplay
+            this._pendingDraft.modelLabel = `${label}${meta.is_mock ? ' · 演示' : ''}`
             this._pendingDraft.loveProfileInjected = Boolean(meta.love_profile_injected)
             this._pendingDraft.emotionCare = meta.emotion_care || null
             this._pendingDraft.invokedSkills = meta.invoked_skills || []
-            if (meta.emotion_care) {
-              receivedCare = true
-              this.setMascotMood('comfort', 5400)
-            }
             this.scheduleDraftFlush(aiIndex)
           }
         },
-        onFallback: (backupLabel) => {
+        onFallback: () => {
           if (this._pendingDraft) {
-            this._pendingDraft.modelLabel = `${backupLabel} · 自动容灾接管`
+            this._pendingDraft.modelLabel = `${personaDisplay} · 备用线路`
             this.scheduleDraftFlush(aiIndex)
           }
         },
@@ -536,9 +511,6 @@ Page({
           }
         },
         onDelta: (chunk) => {
-          if (!receivedCare && this.data.mascotMood === 'thinking') {
-            this.setMascotMood('', 0)
-          }
           if (this._pendingDraft) {
             this._pendingDraft.content += chunk
             this.scheduleDraftFlush(aiIndex)
@@ -552,16 +524,12 @@ Page({
               : `⚠️ ${errMsg}`
             this.flushDraftNow(aiIndex)
           }
-          this.setMascotMood('comfort', 3000)
         },
       })
 
       this._streamHandle = handle
       await handle.promise
       this.flushDraftNow(aiIndex)
-      if (!receivedCare && this._pendingDraft && !this._pendingDraft.isError && this._pendingDraft.content) {
-        this.setMascotMood('happy', 2400)
-      }
       this.loadConversations()
       this.refreshLightMeta()
     } catch (err) {
@@ -570,7 +538,6 @@ Page({
         this._pendingDraft.content = `请求出错：${(err && err.message) || '请检查网络连接'}`
         this.flushDraftNow(aiIndex)
       }
-      this.setMascotMood('comfort', 3000)
     } finally {
       this._streamHandle = null
       this._pendingDraft = null
@@ -608,7 +575,6 @@ Page({
         category: 'chat',
         scene_label: label.slice(0, 64),
       })
-      this.setMascotMood('happy', 2200)
       wx.showToast({
         title: res && res.deduplicated ? '已在收藏夹中' : '已收藏到话术库',
         icon: 'success',

@@ -2,8 +2,8 @@ const api = require('../../services/api')
 const auth = require('../../utils/auth')
 
 const STORAGE_KEY = 'ailove_mp_mascot_v1'
-const AVATAR_PX_W = 84
-const AVATAR_PX_H = 92
+const AVATAR_PX_W = 70
+const AVATAR_PX_H = 78
 const EDGE_GAP = 10
 
 const LIAN_SYSTEM_PROMPT = `你是「恋恋」，AILOVE 微信小程序的可爱常驻看板娘（玫瑰心狐娘，头戴心形发卡、有着玫瑰粉狐耳与蓬松白尖狐尾）。

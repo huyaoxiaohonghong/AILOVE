@@ -1,11 +1,4 @@
 <view class="container safe-bottom">
-  <view class="intro-banner">
-    <view class="intro-title">🧊 先别发！情绪降温与话术柔化</view>
-    <view class="intro-sub">
-      气头上最容易发出伤感情的反话。先贴进来，AI 帮你留住体面与底线，换一种让对方听得进去的表达
-    </view>
-  </view>
-
   <view class="card">
     <view class="field-head">
       <text class="field-label">差点发出去的原话草稿 *</text>
@@ -20,21 +13,20 @@
       bindinput="onDraftInput"
     />
 
-    <view class="field-label" style="margin-top: 24rpx;">此刻你的情绪温度</view>
-    <view class="intensity-list">
+    <view class="field-label" style="margin-top: 22rpx;">此刻的情绪温度</view>
+    <view class="intensity-grid">
       <view
         wx:for="{{intensities}}"
         wx:key="code"
-        class="intensity-item {{intensity === item.code ? 'intensity-active' : ''}}"
+        class="intensity-seg {{intensity === item.code ? 'intensity-active' : ''}}"
         data-code="{{item.code}}"
         bindtap="onSelectIntensity"
       >
         <view class="intensity-name">{{item.label}}</view>
-        <view class="intensity-desc">{{item.desc}}</view>
       </view>
     </view>
 
-    <view class="field-label" style="margin-top: 24rpx;">前因背景（可选）</view>
+    <view class="field-label" style="margin-top: 22rpx;">前因背景（可选）</view>
     <input
       class="text-input"
       placeholder="例如：约定好见面，对方临时放鸽子还没解释"
@@ -49,7 +41,7 @@
       disabled="{{generating}}"
       bindtap="handleGenerate"
     >
-      {{generating ? '正在为你降温改写...' : '帮我柔化成 3 个稳妥版本'}}
+      {{generating ? '正在为你降温改写...' : '柔化成 3 个稳妥版本'}}
     </button>
   </view>
 
@@ -91,6 +83,4 @@
       转入对话继续聊 ›
     </button>
   </view>
-
-  <mascot-lian bottomOffset="{{90}}" pageHint="发火前深呼吸，恋恋陪你先柔化一下~" />
 </view>

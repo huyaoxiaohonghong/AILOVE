@@ -1,15 +1,8 @@
 <view class="container safe-bottom">
-  <view class="intro-banner">
-    <view class="intro-title">💬 帮我回消息 · 微信高情商参谋</view>
-    <view class="intro-sub">
-      粘贴对方发来的原话，AI 帮你剖析字面外的潜台词，并生成 3 条可直接发送的自然回复
-    </view>
-  </view>
-
   <view class="card">
     <view class="field-head">
-      <text class="field-label">微信聊天截图识图（可选，最多 3 张）</text>
-      <text class="vision-badge">{{hasVisionModel ? '👁️ 识图已就绪' : '📸 支持识图/演示'}}</text>
+      <text class="field-label">微信截图识图（可选，最多 3 张）</text>
+      <text class="vision-badge">{{hasVisionModel ? '👁️ 识图已就绪' : '📸 支持识图'}}</text>
     </view>
     <view class="shot-row">
       <view wx:for="{{images}}" wx:key="*this" class="shot-box">
@@ -23,19 +16,19 @@
     </view>
 
     <view class="field-head" style="margin-top: 22rpx;">
-      <text class="field-label">对方发来的原话 / 聊天片段（传图时可选）</text>
+      <text class="field-label">对方发来的原话（传图时可选）</text>
       <text class="paste-btn" bindtap="onPasteClipboard">📋 一键粘贴</text>
     </view>
     <textarea
       class="msg-textarea"
-      placeholder="例如：最近项目真的太忙了，改天有空再约你吧"
+      placeholder="粘贴对方的话，例如：最近太忙了，改天有空再约吧"
       value="{{partnerMessage}}"
       maxlength="2000"
       auto-height="true"
       bindinput="onPartnerInput"
     />
 
-    <view class="field-label" style="margin-top: 26rpx;">当前互动场景</view>
+    <view class="field-label" style="margin-top: 22rpx;">互动场景</view>
     <view class="chip-list">
       <view
         wx:for="{{scenes}}"
@@ -48,43 +41,52 @@
       </view>
     </view>
 
-    <view class="field-label" style="margin-top: 26rpx;">期望回复语气</view>
-    <view class="tone-grid">
+    <view class="field-label" style="margin-top: 22rpx;">期望语气</view>
+    <view class="chip-list">
       <view
         wx:for="{{tones}}"
         wx:key="code"
-        class="tone-item {{tone === item.code ? 'tone-active' : ''}}"
+        class="chip {{tone === item.code ? 'chip-active' : ''}}"
         data-code="{{item.code}}"
         bindtap="onSelectTone"
       >
-        <view class="tone-name">{{item.label}}</view>
-        <view class="tone-desc">{{item.desc}}</view>
+        {{item.label}}
       </view>
     </view>
 
-    <view class="field-label" style="margin-top: 26rpx;">我真实想表达的意思（可选）</view>
-    <input
-      class="text-input"
-      placeholder="例如：想体面收尾不显得粘人，同时留个小钩子"
-      value="{{myIntent}}"
-      maxlength="400"
-      bindinput="onIntentInput"
-    />
+    <!-- 可选补充折叠区 -->
+    <view class="more-toggle" bindtap="onToggleMoreOptions">
+      <text class="more-toggle-txt">
+        {{showMoreOptions ? '收起补充说明' : '补充我的意图 / 前文背景（可选）'}}
+      </text>
+      <text class="more-toggle-arrow">{{showMoreOptions ? '▲' : '▼'}}</text>
+    </view>
 
-    <view class="field-label" style="margin-top: 22rpx;">前文背景补充（可选）</view>
-    <input
-      class="text-input"
-      placeholder="例如：之前聊得很热络，这两天回复间隔突然拉长"
-      value="{{context}}"
-      maxlength="800"
-      bindinput="onContextInput"
-    />
+    <view wx:if="{{showMoreOptions}}" class="more-fields">
+      <view class="field-label">我真实想表达的意思</view>
+      <input
+        class="text-input"
+        placeholder="例如：想体面收尾不显得粘人，同时留个小钩子"
+        value="{{myIntent}}"
+        maxlength="400"
+        bindinput="onIntentInput"
+      />
+
+      <view class="field-label" style="margin-top: 18rpx;">前文背景补充</view>
+      <input
+        class="text-input"
+        placeholder="例如：之前聊得很热络，这两天回复间隔突然拉长"
+        value="{{context}}"
+        maxlength="800"
+        bindinput="onContextInput"
+      />
+    </view>
 
     <view class="profile-hint-row" bindtap="goLoveProfile">
       <text class="muted-text">
-        {{loveProfileActive ? '💞 已开启情感档案记忆，将自动结合你的背景生成建议' : '💡 搭配「我的情感档案」记忆卡，回复会更贴合你们关系'}}
+        {{loveProfileActive ? '💞 已结合你的情感档案记忆' : '💡 填写情感档案，回复更贴合你们关系'}}
       </text>
-      <text class="hint-link">去设置 ›</text>
+      <text class="hint-link">{{loveProfileActive ? '查看 ›' : '去填写 ›'}}</text>
     </view>
 
     <button
@@ -93,7 +95,7 @@
       disabled="{{generating}}"
       bindtap="handleGenerate"
     >
-      {{generating ? '正在拆解潜台词...' : '立即拆解并生成 3 条回复'}}
+      {{generating ? '正在拆解潜台词...' : '拆解潜台词并生成 3 条回复'}}
     </button>
   </view>
 
@@ -113,7 +115,7 @@
 
     <!-- 快捷可复制备选回复卡片 -->
     <view wx:if="{{suggestedReplies.length > 0}}" class="quick-replies">
-      <view class="quick-replies-title">✨ 可直接复制或收藏（轻触即用）</view>
+      <view class="quick-replies-title">✨ 可直接复制或收藏</view>
       <view wx:for="{{suggestedReplies}}" wx:key="*this" class="reply-quote-card">
         <view class="reply-quote-txt" data-text="{{item}}" bindtap="onCopyText">{{item}}</view>
         <view class="quote-ops">
@@ -142,6 +144,4 @@
       转入对话继续追问 ›
     </button>
   </view>
-
-  <mascot-lian bottomOffset="{{90}}" pageHint="直接传微信聊天截图也能识图出招哦~" />
 </view>

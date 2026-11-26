@@ -5,10 +5,10 @@
     <text class="notice-text">{{announcement}}</text>
   </view>
 
-  <!-- 品牌 Hero 卡片 -->
+  <!-- 轻盈欢迎 Hero 卡 -->
   <view class="hero-card">
     <view class="hero-top-row">
-      <view class="hero-brand-pill">AILOVE · 恋爱情感 AI</view>
+      <view class="hero-brand-pill">AILOVE · 恋爱军师</view>
       <view wx:if="{{quotaText}}" class="hero-quota-pill">{{quotaText}}</view>
     </view>
 
@@ -16,26 +16,14 @@
       {{userInfo && userInfo.nickname ? ('你好，' + userInfo.nickname) : '懂你心事的恋爱军师'}}
     </view>
     <view class="hero-desc">
-      聊不下去、捉摸不透潜台词、异地或冷战卡壳？把心事交给更懂中文情感的专属 AI 导师。
-    </view>
-
-    <!-- 情感档案状态捷径 -->
-    <view class="profile-strip" bindtap="goLoveProfile">
-      <view class="profile-strip-left">
-        <text class="profile-strip-emoji">💞</text>
-        <text class="profile-strip-text" wx:if="{{loveProfile && loveProfile.is_configured}}">
-          {{loveProfile.relationship_stage_label || '情感档案已填写'}} · {{loveProfile.auto_inject ? '记忆已自动生效' : '记忆已暂停'}}
-        </text>
-        <text class="profile-strip-text" wx:else>
-          建立我的「情感背景记忆卡」，聊天不用重复交代
-        </text>
-      </view>
-      <text class="profile-strip-arrow">去设置 ›</text>
+      聊不下去、猜不透潜台词？随时告诉我，帮你体面回应。
     </view>
 
     <view class="hero-actions">
-      <button class="hero-btn-solid" bindtap="goReplyHelper">💬 帮我回消息</button>
-      <button class="hero-btn-outline" bindtap="goFreeChat">✨ 自由倾诉</button>
+      <button class="hero-btn-solid" bindtap="goFreeChat">✨ 自由倾诉</button>
+      <button class="hero-btn-outline" bindtap="goLoveProfile">
+        💞 {{loveProfile && loveProfile.is_configured ? (loveProfile.relationship_stage_label || '档案已开') : '情感档案'}}
+      </button>
     </view>
   </view>
 
@@ -47,9 +35,9 @@
 
   <!-- 小圈子邀请码未激活提示卡 -->
   <view wx:if="{{inviteLocked}}" class="card invite-lock-card">
-    <view class="invite-lock-title">🔐 小圈子内测激活</view>
+    <view class="invite-lock-title">🔐 内测邀请码激活</view>
     <view class="invite-lock-desc">
-      本项目当前仅限熟人与受邀体验，请输入邀请码（如 LOVE-XXXXXX）后即可解锁全部情感导师与工具。
+      请输入内测邀请码（如 LOVE-XXXXXX）解锁全部情感导师与工具。
     </view>
     <view class="invite-input-row">
       <input
@@ -69,91 +57,58 @@
     </view>
   </view>
 
-  <!-- 四大核心高频工具卡片（2×2 矩阵） -->
+  <!-- 两大核心高频工具（去重后仅保留最高频两项） -->
   <view class="tool-grid">
     <view class="tool-card tool-rose" bindtap="goReplyHelper">
-      <view class="tool-emoji">💬</view>
-      <view class="tool-title">帮我回消息 2.0</view>
-      <view class="tool-desc">粘贴原话或上传微信截图，秒拆潜台词 + 3 条回复</view>
+      <view class="tool-head">
+        <text class="tool-emoji">💬</text>
+        <text class="tool-badge">支持识图</text>
+      </view>
+      <view class="tool-title">帮我回消息</view>
+      <view class="tool-desc">贴原话或微信截图，3 条高情商回复</view>
     </view>
     <view class="tool-card tool-ice" bindtap="goSoftenDraft">
-      <view class="tool-emoji">🧊</view>
-      <view class="tool-title">先别发 · 柔化器</view>
-      <view class="tool-desc">气头上先降温，把带刺狠话改写成体面表达</view>
-    </view>
-    <view class="tool-card tool-blush" bindtap="goLoveProfile">
-      <view class="tool-emoji">💞</view>
-      <view class="tool-title">我的情感档案</view>
-      <view class="tool-desc">记录恋爱阶段与雷区，每次咨询不用重复交代</view>
-    </view>
-    <view class="tool-card tool-gold" bindtap="goFavorites">
-      <view class="tool-emoji">⭐</view>
-      <view class="tool-title">高情商话术库</view>
-      <view class="tool-desc">珍藏救场金句、升温开场白，随手复制发送</view>
-    </view>
-  </view>
-
-  <!-- 5 大恋爱情感智能体导师 -->
-  <view class="section-head">
-    <text class="section-title">专属恋爱情感导师</text>
-    <text class="section-more">{{allPersonas.length}} 位在线</text>
-  </view>
-
-  <scroll-view class="cat-scroll" scroll-x="true" enable-flex="true">
-    <view class="cat-row">
-      <view
-        wx:for="{{categories}}"
-        wx:key="key"
-        class="cat-pill {{activeCategory === item.key ? 'cat-pill-active' : ''}}"
-        data-key="{{item.key}}"
-        bindtap="onSelectCategory"
-      >
-        {{item.label}}
+      <view class="tool-head">
+        <text class="tool-emoji">🧊</text>
+        <text class="tool-badge tool-badge-ice">先降温</text>
       </view>
+      <view class="tool-title">先别发 · 柔化器</view>
+      <view class="tool-desc">气头上别硬刚，狠话改写体面表达</view>
     </view>
-  </scroll-view>
-
-  <view wx:if="{{loading && filteredPersonas.length === 0}}" class="empty-box">
-    正在唤醒专属恋爱导师...
   </view>
 
-  <view wx:else class="persona-list">
+  <!-- 5 位专属恋爱导师（清爽单行列表） -->
+  <view class="section-head">
+    <text class="section-title">找一位导师聊聊</text>
+    <text wx:if="{{allPersonas.length > 0}}" class="section-more">{{allPersonas.length}} 位在线</text>
+  </view>
+
+  <view wx:if="{{loading && allPersonas.length === 0}}" class="empty-box">
+    正在唤醒恋爱导师...
+  </view>
+
+  <view wx:else class="card persona-card-group">
     <view
-      wx:for="{{filteredPersonas}}"
+      wx:for="{{allPersonas}}"
       wx:key="id"
-      class="persona-card"
+      class="persona-row"
       data-id="{{item.id}}"
       bindtap="onTapPersona"
     >
-      <view class="persona-main">
-        <view class="persona-avatar">{{item.avatar_emoji || '💘'}}</view>
-        <view class="persona-info">
-          <view class="persona-title-row">
-            <text class="persona-name">{{item.name}}</text>
-            <text class="persona-usage">{{item.usage_count || 0}} 次咨询</text>
-          </view>
-          <view class="persona-desc">{{item.description}}</view>
-        </view>
+      <view class="persona-avatar">{{item.avatar_emoji || '💘'}}</view>
+      <view class="persona-info">
+        <view class="persona-name">{{item.name}}</view>
+        <view class="persona-desc">{{item.description}}</view>
       </view>
-      <view
-        wx:if="{{item.starter_prompts && item.starter_prompts.length > 0}}"
-        class="persona-starter"
-        catchtap="onTapStarter"
-        data-id="{{item.id}}"
-        data-prompt="{{item.starter_prompts[0]}}"
-      >
-        <text class="starter-tag">试试问</text>
-        <text class="starter-txt">{{item.starter_prompts[0]}}</text>
-        <text class="starter-go">›</text>
-      </view>
+      <text class="persona-go">聊聊 ›</text>
     </view>
   </view>
 
-  <!-- 最近历史会话快捷续聊 -->
+  <!-- 最近续聊（最多 2 条，无记录时隐藏） -->
   <view wx:if="{{recentConversations.length > 0}}" class="recent-wrap">
     <view class="section-head">
-      <text class="section-title">最近咨询续聊</text>
-      <text class="section-more" bindtap="onOpenHistoryTab">全部历史 ›</text>
+      <text class="section-title">最近继续聊</text>
+      <text class="section-more" bindtap="onOpenHistoryTab">全部 ›</text>
     </view>
     <view class="card recent-card">
       <view
@@ -168,9 +123,8 @@
             <text wx:if="{{item.is_pinned}}" class="recent-pin">📌</text>
             <text class="recent-title">{{item.title}}</text>
           </view>
-          <view class="recent-meta">
-            <text wx:if="{{item.persona_name}}" class="recent-persona">{{item.persona_name}}</text>
-            <text class="recent-model">{{item.model_name || 'AI'}}</text>
+          <view wx:if="{{item.persona_name}}" class="recent-meta">
+            <text class="recent-persona">{{item.persona_name}}</text>
           </view>
         </view>
         <text class="recent-arrow">续聊 ›</text>
@@ -178,5 +132,5 @@
     </view>
   </view>
 
-  <mascot-lian bottomOffset="{{140}}" pageHint="点我随时问功能或聊心事哦~" />
+  <mascot-lian bottomOffset="{{130}}" pageHint="有心事或功能疑问点我呀~" />
 </view>

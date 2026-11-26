@@ -1,76 +1,29 @@
 <view class="chat-page">
-  <!-- 顶栏：历史会话 / 新对话 / 情感档案状态 -->
+  <!-- 单行极简顶栏：左侧导师与模式切换，右侧历史与新对话 -->
   <view class="chat-header">
-    <view class="header-left">
+    <view class="mode-trigger" bindtap="onOpenModeSheet">
+      <text class="mode-name">
+        {{activePersona ? ((activePersona.avatar_emoji || '💘') + ' ' + activePersona.name) : '✨ 默认助手'}}
+      </text>
+      <text wx:if="{{incognitoMode}}" class="mode-dot mode-dot-warn">无痕</text>
+      <text wx:elif="{{selectedSkillIds.length > 0}}" class="mode-dot mode-dot-skill">知识库</text>
+      <text wx:elif="{{loveProfileActive}}" class="mode-dot">档案</text>
+      <text class="mode-caret">▾</text>
+    </view>
+
+    <view class="header-right">
       <view class="header-pill" bindtap="onOpenHistory">
-        <text>📜 历史</text>
+        <text>历史</text>
         <text wx:if="{{conversations.length > 0}}" class="pill-count">{{conversations.length}}</text>
       </view>
-      <view class="header-pill" bindtap="onNewChatTap">＋ 新对话</view>
-      <view
-        class="header-pill {{incognitoMode ? 'incognito-pill-on' : ''}}"
-        bindtap="onToggleIncognito"
-      >
-        🕵️ {{incognitoMode ? '无痕中' : '无痕'}}
-      </view>
-    </view>
-    <view class="header-right">
-      <view
-        class="profile-pill {{loveProfileActive ? 'profile-pill-on' : ''}}"
-        bindtap="goLoveProfile"
-      >
-        💞 {{loveProfileActive ? (loveProfileStage || '记忆已开') : '情感档案'}}
-      </view>
+      <view class="header-pill header-pill-new" bindtap="onNewChatTap">＋ 新对话</view>
     </view>
   </view>
 
-  <!-- 5 大恋爱情感智能体横向切换条 -->
-  <scroll-view class="persona-scroll" scroll-x="true" enable-flex="true">
-    <view class="persona-row">
-      <view
-        class="p-chip {{!selectedPersonaId ? 'p-chip-active' : ''}}"
-        data-id=""
-        bindtap="onSelectPersona"
-      >
-        ✨ 默认直连
-      </view>
-      <view
-        wx:for="{{personas}}"
-        wx:key="id"
-        class="p-chip {{selectedPersonaId === item.id ? 'p-chip-active' : ''}}"
-        data-id="{{item.id}}"
-        bindtap="onSelectPersona"
-      >
-        {{item.avatar_emoji || '💘'}} {{item.name}}
-      </view>
-    </view>
-  </scroll-view>
-
+  <!-- 仅在主动开启无痕时显示轻提示 -->
   <view wx:if="{{incognitoMode}}" class="incognito-strip">
-    🕵️ 无痕倾诉模式：本轮内容绝不存入云端历史与情感手账，退出即销毁
+    🕵️ 无痕倾诉中：本轮内容不存入云端历史，退出即销毁
   </view>
-
-  <!-- 知识库 Skill 快捷挂载条 -->
-  <scroll-view wx:if="{{skills.length > 0}}" class="skill-scroll" scroll-x="true" enable-flex="true">
-    <view class="skill-row">
-      <view
-        class="sk-chip {{selectedSkillIds.length === 0 ? 'sk-chip-active' : ''}}"
-        data-id=""
-        bindtap="onSelectSkill"
-      >
-        🧩 自动匹配 Skill
-      </view>
-      <view
-        wx:for="{{skills}}"
-        wx:key="id"
-        class="sk-chip {{item._selected ? 'sk-chip-active' : ''}}"
-        data-id="{{item.id}}"
-        bindtap="onSelectSkill"
-      >
-        📚 {{item.name}}
-      </view>
-    </view>
-  </scroll-view>
 
   <!-- 对话消息滚动区 -->
   <scroll-view
@@ -90,7 +43,7 @@
         class="msg-row {{item.role === 'user' ? 'msg-user' : 'msg-ai'}}"
       >
         <view class="msg-bubble {{item.isError ? 'msg-error' : ''}}">
-          <!-- 角色与情感档案徽章 -->
+          <!-- 导师身份与情感档案标记 -->
           <view wx:if="{{item.role === 'assistant'}}" class="bubble-head">
             <text class="bubble-role">{{item.modelLabel || 'AILOVE 恋爱助手'}}</text>
             <text wx:if="{{item.loveProfileInjected}}" class="profile-tag">💞 已结合档案</text>
@@ -99,7 +52,7 @@
           <!-- 可折叠深度思考过程 -->
           <view wx:if="{{item.reasoning}}" class="reasoning-box">
             <view class="reasoning-toggle" data-idx="{{index}}" bindtap="onToggleReasoning">
-              <text>🧠 深度思考过程</text>
+              <text>🧠 思考过程</text>
               <text>{{item.reasoningOpen ? '收起 ▲' : '展开 ▼'}}</text>
             </view>
             <view wx:if="{{item.reasoningOpen}}" class="reasoning-content">
@@ -118,7 +71,7 @@
             class="skill-cites-box"
           >
             <view wx:for="{{item.invokedSkills}}" wx:for-item="sk" wx:key="id" class="skill-cite-item">
-              <text class="skill-cite-head">🧩 已调用 Skill · {{sk.name}}</text>
+              <text class="skill-cite-head">🧩 参考知识库 · {{sk.name}}</text>
               <view wx:if="{{sk.citations && sk.citations.length > 0}}" class="skill-cite-tags">
                 <text
                   wx:for="{{sk.citations}}"
@@ -167,34 +120,42 @@
               ⭐ 收藏
             </text>
             <text class="copy-btn" data-content="{{item.content}}" bindtap="onCopyMessage">
-              复制回复
+              复制
             </text>
           </view>
         </view>
       </view>
-      <view id="chat-bottom-anchor" style="height: 24rpx;"></view>
-    </view>
-  </scroll-view>
 
-  <!-- 输入框上方：帮我回消息 + 先别发 + 当前导师快捷提问 -->
-  <scroll-view class="starter-scroll" scroll-x="true" enable-flex="true">
-    <view class="starter-row">
-      <view class="reply-helper-pill" bindtap="goReplyHelper">💬 帮我回消息</view>
-      <view class="soften-pill" bindtap="goSoftenDraft">🧊 先别发</view>
-      <view
-        wx:for="{{activePersona ? activePersona.starter_prompts : []}}"
-        wx:key="*this"
-        class="starter-pill"
-        data-prompt="{{item}}"
-        bindtap="onTapStarter"
-      >
-        {{item}}
+      <!-- 空态快捷引导（仅开场时展示，开聊后自动收起） -->
+      <view wx:if="{{messages.length <= 1 && !sending}}" class="welcome-dock">
+        <view class="dock-tools">
+          <view class="dock-tool-pill dock-rose" bindtap="goReplyHelper">💬 帮我回消息 · 识图</view>
+          <view class="dock-tool-pill dock-ice" bindtap="goSoftenDraft">🧊 先别发 · 降温</view>
+        </view>
+        <view
+          wx:if="{{activePersona && activePersona.starter_prompts && activePersona.starter_prompts.length > 0}}"
+          class="dock-starters"
+        >
+          <view class="dock-label">试试这样问：</view>
+          <view
+            wx:for="{{activePersona.starter_prompts}}"
+            wx:key="*this"
+            class="dock-starter-item"
+            data-prompt="{{item}}"
+            bindtap="onTapStarter"
+          >
+            <text class="dock-starter-txt">{{item}}</text>
+            <text class="dock-starter-go">↗</text>
+          </view>
+        </view>
       </view>
+
+      <view id="chat-bottom-anchor" style="height: 20rpx;"></view>
     </view>
   </scroll-view>
 
-  <!-- 底部输入栏（适配全面屏安全区） -->
-  <view class="chat-composer safe-bottom">
+  <!-- 底部输入栏（TabBar 页无需 safe-bottom，消除底部多余留白） -->
+  <view class="chat-composer">
     <input
       class="composer-input"
       placeholder="{{activePersona ? ('向「' + activePersona.name + '」倾诉...') : '说说你的心事或粘贴 TA 的话...'}}"
@@ -214,11 +175,91 @@
     </button>
   </view>
 
+  <!-- 切换导师与对话模式抽屉 -->
+  <view wx:if="{{modeSheetVisible}}" class="sheet-mask" bindtap="onCloseModeSheet">
+    <view class="sheet-panel" catchtap="noop">
+      <view class="sheet-head">
+        <text class="sheet-title">切换导师与模式</text>
+        <text class="sheet-close" bindtap="onCloseModeSheet">完成</text>
+      </view>
+      <scroll-view class="sheet-scroll" scroll-y="true">
+        <view class="mode-section-label">选择恋爱导师</view>
+        <view class="mode-chip-wrap">
+          <view
+            class="p-chip {{!selectedPersonaId ? 'p-chip-active' : ''}}"
+            data-id=""
+            bindtap="onSelectPersona"
+          >
+            ✨ 默认助手
+          </view>
+          <view
+            wx:for="{{personas}}"
+            wx:key="id"
+            class="p-chip {{selectedPersonaId === item.id ? 'p-chip-active' : ''}}"
+            data-id="{{item.id}}"
+            bindtap="onSelectPersona"
+          >
+            {{item.avatar_emoji || '💘'}} {{item.name}}
+          </view>
+        </view>
+        <view wx:if="{{activePersona && activePersona.description}}" class="mode-persona-hint">
+          {{activePersona.description}}
+        </view>
+
+        <view wx:if="{{skills.length > 0}}" class="mode-section-block">
+          <view class="mode-section-label">专属知识库</view>
+          <view class="mode-chip-wrap">
+            <view
+              class="sk-chip {{selectedSkillIds.length === 0 ? 'sk-chip-active' : ''}}"
+              data-id=""
+              bindtap="onSelectSkill"
+            >
+              🧩 自动匹配
+            </view>
+            <view
+              wx:for="{{skills}}"
+              wx:key="id"
+              class="sk-chip {{item._selected ? 'sk-chip-active' : ''}}"
+              data-id="{{item.id}}"
+              bindtap="onSelectSkill"
+            >
+              📚 {{item.name}}
+            </view>
+          </view>
+        </view>
+
+        <view class="mode-section-block">
+          <view class="mode-section-label">对话设置</view>
+          <view class="mode-setting-row">
+            <view class="mode-setting-text">
+              <view class="mode-setting-title">🕵️ 无痕倾诉模式</view>
+              <view class="mode-setting-sub">开启后本轮对话绝不存入云端历史</view>
+            </view>
+            <switch
+              checked="{{incognitoMode}}"
+              color="#c83553"
+              bindchange="onToggleIncognito"
+            />
+          </view>
+          <view class="mode-setting-row" bindtap="onGoLoveProfileFromSheet">
+            <view class="mode-setting-text">
+              <view class="mode-setting-title">💞 我的情感档案</view>
+              <view class="mode-setting-sub">
+                {{loveProfileActive ? (loveProfileStage || '记忆已生效，聊天无需重复交代') : '未开启，去填写恋爱背景记忆卡'}}
+              </view>
+            </view>
+            <text class="mode-setting-arrow">去设置 ›</text>
+          </view>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+
   <!-- 历史会话底部抽屉 -->
   <view wx:if="{{historyVisible}}" class="sheet-mask" bindtap="onCloseHistory">
-    <view class="sheet-panel safe-bottom" catchtap="noop">
+    <view class="sheet-panel" catchtap="noop">
       <view class="sheet-head">
-        <text class="sheet-title">历史咨询记录 ({{conversations.length}})</text>
+        <text class="sheet-title">历史咨询 ({{conversations.length}})</text>
         <text class="sheet-close" bindtap="onCloseHistory">关闭</text>
       </view>
       <scroll-view class="sheet-scroll" scroll-y="true">
@@ -238,8 +279,7 @@
               <text class="hist-title">{{item.title}}</text>
             </view>
             <view class="hist-meta">
-              <text wx:if="{{item.persona_name}}" class="hist-persona">{{item.persona_name}}</text>
-              <text class="hist-model">{{item.model_name || 'AI'}}</text>
+              <text class="hist-persona">{{item.persona_name || '自由倾诉'}}</text>
             </view>
           </view>
           <view class="hist-ops" catchtap="noop">
@@ -264,6 +304,4 @@
       </scroll-view>
     </view>
   </view>
-
-  <mascot-lian bottomOffset="{{240}}" externalMood="{{mascotMood}}" />
 </view>

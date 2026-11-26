@@ -2,15 +2,6 @@ const api = require('../../services/api')
 const auth = require('../../utils/auth')
 const env = require('../../config/env')
 
-const CATEGORIES = [
-  { key: 'all', label: '全部导师' },
-  { key: 'chat_coach', label: '聊天话术' },
-  { key: 'dating', label: '心动约会' },
-  { key: 'relationship', label: '亲密关系' },
-  { key: 'conflict', label: '矛盾修复' },
-  { key: 'healing', label: '情绪疗愈' },
-]
-
 Page({
   data: {
     loading: true,
@@ -22,10 +13,7 @@ Page({
     announcement: '',
     loveProfile: null,
     quotaText: '',
-    categories: CATEGORIES,
-    activeCategory: 'all',
     allPersonas: [],
-    filteredPersonas: [],
     recentConversations: [],
   },
 
@@ -45,7 +33,6 @@ Page({
       this._lastEnvKey = currentEnv
       this.setData({
         allPersonas: [],
-        filteredPersonas: [],
         recentConversations: [],
         loveProfile: null,
         quotaText: '',
@@ -101,7 +88,7 @@ Page({
       ])
 
       const allPersonas = (personasRes && personasRes.items) || []
-      const recent = ((convRes && convRes.items) || []).slice(0, 3)
+      const recent = ((convRes && convRes.items) || []).slice(0, 2)
       const inviteRequired = Boolean(
         (pubCfg && pubCfg.invite_code_required) || (meProfile && meProfile.invite_required)
       )
@@ -112,9 +99,9 @@ Page({
       let quotaText = ''
       if (quotaRes) {
         if (quotaRes.is_exempt) {
-          quotaText = `今日已咨询 ${quotaRes.requests_used} 次`
+          quotaText = `今日已聊 ${quotaRes.requests_used} 次`
         } else if (quotaRes.requests_limit > 0) {
-          quotaText = `今日剩余 ${quotaRes.requests_remaining}/${quotaRes.requests_limit} 次`
+          quotaText = `今日剩余 ${quotaRes.requests_remaining}/${quotaRes.requests_limit}`
         }
       }
 
@@ -128,26 +115,11 @@ Page({
         recentConversations: recent,
         quotaText,
       })
-      this.applyCategoryFilter(this.data.activeCategory)
     } catch (err) {
       this.setData({
         errorMsg: (err && err.message) || '加载数据失败，请下拉刷新',
       })
     }
-  },
-
-  applyCategoryFilter(catKey) {
-    const all = this.data.allPersonas || []
-    const list = catKey === 'all' ? all : all.filter((p) => p.category === catKey)
-    this.setData({
-      activeCategory: catKey,
-      filteredPersonas: list,
-    })
-  },
-
-  onSelectCategory(e) {
-    const key = e.currentTarget.dataset.key || 'all'
-    this.applyCategoryFilter(key)
   },
 
   goReplyHelper() {
@@ -201,15 +173,6 @@ Page({
     if (!pid) return
     const app = getApp()
     app.setChatIntent({ personaId: pid, newChat: true })
-    wx.switchTab({ url: '/pages/chat/chat' })
-  },
-
-  onTapStarter(e) {
-    const pid = Number(e.currentTarget.dataset.id)
-    const promptText = e.currentTarget.dataset.prompt || ''
-    if (!promptText) return
-    const app = getApp()
-    app.setChatIntent({ personaId: pid || undefined, promptText, newChat: true })
     wx.switchTab({ url: '/pages/chat/chat' })
   },
 

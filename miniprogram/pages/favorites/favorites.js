@@ -15,6 +15,7 @@ Page({
     categories: CATEGORIES,
     activeCategory: 'all',
     items: [],
+    showAddForm: false,
     newContent: '',
     newNote: '',
     saving: false,
@@ -58,6 +59,10 @@ Page({
     this.setData({ newNote: e.detail.value })
   },
 
+  onToggleAddForm() {
+    this.setData({ showAddForm: !this.data.showAddForm })
+  },
+
   async handleAddCustom() {
     const content = (this.data.newContent || '').trim()
     if (!content) {
@@ -73,7 +78,7 @@ Page({
         scene_label: '随手备忘',
         note: (this.data.newNote || '').trim(),
       })
-      this.setData({ newContent: '', newNote: '' })
+      this.setData({ newContent: '', newNote: '', showAddForm: false })
       wx.showToast({
         title: res && res.deduplicated ? '已在收藏夹中' : '已加入话术库',
         icon: 'success',

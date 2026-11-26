@@ -47,6 +47,7 @@ Page({
     scenes: DEFAULT_SCENES,
     tones: DEFAULT_TONES,
     loveProfileActive: false,
+    showMoreOptions: false,
     generating: false,
     resultSessionId: '',
     resultText: '',
@@ -120,6 +121,10 @@ Page({
 
   onSelectTone(e) {
     this.setData({ tone: e.currentTarget.dataset.code })
+  },
+
+  onToggleMoreOptions() {
+    this.setData({ showMoreOptions: !this.data.showMoreOptions })
   },
 
   readFileAsDataUrl(filePath) {
@@ -244,12 +249,12 @@ Page({
             const pName = meta.persona_name || '高情商恋爱军师'
             this.setData({
               resultSessionId: meta.session_id || '',
-              resultLabel: `${pName} · ${meta.model || 'AI'}${meta.love_profile_injected ? ' · 已结合情感档案' : ''}`,
+              resultLabel: `${pName}${meta.love_profile_injected ? ' · 已结合情感档案' : ''}`,
               emotionCare: meta.emotion_care || null,
             })
           },
-          onFallback: (backupLabel) => {
-            this.setData({ resultLabel: `${backupLabel} · 自动容灾接管` })
+          onFallback: () => {
+            this.setData({ resultLabel: '高情商恋爱军师 · 备用线路' })
           },
           onDelta: (chunk) => {
             this._draftText += chunk

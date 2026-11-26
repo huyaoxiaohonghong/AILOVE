@@ -1,16 +1,17 @@
 @import "../reply-helper/reply-helper.wxss";
 
-.intensity-list {
-  display: flex;
-  flex-direction: column;
+.intensity-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12rpx;
 }
 
-.intensity-item {
-  padding: 18rpx 20rpx;
+.intensity-seg {
+  padding: 18rpx 10rpx;
   border-radius: 16rpx;
   background: #faf5f7;
   border: 1rpx solid #efe2e7;
+  text-align: center;
 }
 
 .intensity-active {
@@ -19,32 +20,12 @@
 }
 
 .intensity-name {
-  font-size: 26rpx;
-  font-weight: 700;
-  color: #1d1720;
-  margin-bottom: 4rpx;
+  font-size: 25rpx;
+  font-weight: 600;
+  color: #4b4050;
 }
 
 .intensity-active .intensity-name {
   color: #c83553;
-}
-
-.intensity-desc {
-  font-size: 22rpx;
-  color: #7c7080;
-}
-
-.quote-ops {
-  display: flex;
-  align-items: center;
-  gap: 10rpx;
-  flex-shrink: 0;
-}
-
-.quote-fav {
-  padding: 6rpx 12rpx;
-  border-radius: 999rpx;
-  background: #ffffff;
-  border: 1rpx solid #f1ccd6;
-  font-size: 22rpx;
+  font-weight: 700;
 }

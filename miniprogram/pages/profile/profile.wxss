@@ -2,27 +2,27 @@
   background: linear-gradient(135deg, #d84361 0%, #c83553 65%, #a82745 100%);
   color: #ffffff;
   border-radius: 28rpx;
-  padding: 32rpx 30rpx;
-  margin-bottom: 24rpx;
-  box-shadow: 0 12rpx 30rpx rgba(200, 53, 83, 0.25);
+  padding: 30rpx 28rpx;
+  margin-bottom: 22rpx;
+  box-shadow: 0 12rpx 28rpx rgba(200, 53, 83, 0.24);
 }
 
 .profile-top {
   display: flex;
   align-items: center;
-  gap: 24rpx;
+  gap: 22rpx;
 }
 
 .avatar-circle {
-  width: 108rpx;
-  height: 108rpx;
+  width: 100rpx;
+  height: 100rpx;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.22);
   border: 3rpx solid rgba(255, 255, 255, 0.5);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 44rpx;
+  font-size: 42rpx;
   font-weight: 700;
   color: #ffffff;
   flex-shrink: 0;
@@ -36,17 +36,17 @@
 .name-row {
   display: flex;
   align-items: center;
-  gap: 14rpx;
-  margin-bottom: 8rpx;
+  gap: 12rpx;
+  margin-bottom: 6rpx;
 }
 
 .user-name {
-  font-size: 36rpx;
+  font-size: 35rpx;
   font-weight: 700;
 }
 
 .edit-name-btn {
-  font-size: 21rpx;
+  font-size: 20rpx;
   padding: 4rpx 14rpx;
   border-radius: 999rpx;
   background: rgba(255, 255, 255, 0.22);
@@ -55,60 +55,55 @@
 
 .user-sub {
   font-size: 23rpx;
-  color: rgba(255, 244, 247, 0.88);
+  color: rgba(255, 244, 247, 0.9);
 }
 
 .login-pill-btn {
-  margin-top: 24rpx;
+  width: 100% !important;
+  margin-top: 22rpx;
   height: 78rpx;
-  line-height: 78rpx;
   border-radius: 999rpx;
   background: #ffffff;
   color: #c83553;
+  font-size: 27rpx;
+  font-weight: 700;
+}
+
+.invite-card {
+  border: 1rpx solid #f5c2cd;
+  background: #fff7f9;
+}
+
+.invite-title {
   font-size: 28rpx;
   font-weight: 700;
+  color: #a92442;
+  margin-bottom: 14rpx;
 }
 
-.login-pill-btn::after {
-  border: none;
-}
-
-.quota-item {
-  margin-bottom: 20rpx;
-}
-
-.quota-row {
+.invite-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10rpx;
-  font-size: 25rpx;
+  gap: 12rpx;
 }
 
-.quota-label {
-  color: #5b4f5f;
+.invite-input {
+  flex: 1;
+  min-width: 0;
+  height: 74rpx;
+  padding: 0 20rpx;
+  border-radius: 14rpx;
+  background: #ffffff;
+  border: 1rpx solid #efd9e0;
+  font-size: 26rpx;
 }
 
-.quota-val {
-  font-weight: 700;
-  color: #1d1720;
-}
-
-.progress-track {
-  height: 14rpx;
-  border-radius: 999rpx;
-  background: #f6ecef;
-  overflow: hidden;
-}
-
-.progress-fill {
-  height: 100%;
-  border-radius: 999rpx;
-  background: linear-gradient(90deg, #d84361 0%, #c83553 100%);
-}
-
-.progress-soft {
-  background: linear-gradient(90deg, #f59e0b 0%, #e11d48 100%);
+.invite-btn {
+  width: 136rpx !important;
+  flex-shrink: 0;
+  height: 74rpx;
+  padding: 0;
+  font-size: 26rpx;
 }
 
 .menu-card {
@@ -133,10 +128,17 @@
   align-items: center;
   gap: 20rpx;
   flex: 1;
+  min-width: 0;
+}
+
+.menu-info {
+  flex: 1;
+  min-width: 0;
 }
 
 .menu-emoji {
-  font-size: 40rpx;
+  font-size: 38rpx;
+  flex-shrink: 0;
 }
 
 .menu-title {
@@ -149,6 +151,64 @@
 .menu-arrow {
   font-size: 34rpx;
   color: #b4a5b9;
+  flex-shrink: 0;
+}
+
+.logout-btn {
+  width: 100% !important;
+  margin-top: 8rpx;
+  height: 80rpx;
+  border-radius: 999rpx;
+  background: #ffffff;
+  color: #dc2626;
+  border: 1rpx solid #fecaca;
+  font-size: 27rpx;
+  font-weight: 600;
+}
+
+.brand-footer {
+  margin-top: 44rpx;
+  padding: 16rpx 0;
+  text-align: center;
+  font-size: 22rpx;
+  color: #b7a9bc;
+  letter-spacing: 1rpx;
+}
+
+/* 隐藏的开发者弹窗 */
+.dev-mask {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(29, 23, 32, 0.48);
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 36rpx;
+}
+
+.dev-modal {
+  width: 100%;
+  background: #ffffff;
+  border-radius: 26rpx;
+  padding: 28rpx;
+  box-sizing: border-box;
+}
+
+.dev-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18rpx;
+}
+
+.dev-title {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #1d1720;
 }
 
 .env-line {
@@ -169,39 +229,32 @@
 .env-url {
   font-size: 22rpx;
   color: #6b5f70;
-  max-width: 440rpx;
+  max-width: 400rpx;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .env-btns {
-  margin-top: 20rpx;
+  margin-top: 22rpx;
   display: flex;
-  gap: 16rpx;
+  gap: 14rpx;
 }
 
 .env-btn {
   flex: 1;
+  width: 0;
   height: 70rpx;
-  line-height: 70rpx;
-  font-size: 25rpx;
-  margin: 0;
-  padding: 0;
+  font-size: 24rpx;
+  padding: 0 12rpx;
 }
 
-.logout-btn {
-  margin-top: 8rpx;
-  height: 82rpx;
-  line-height: 82rpx;
+.dev-close-btn {
+  width: 100% !important;
+  margin-top: 16rpx;
+  height: 72rpx;
   border-radius: 999rpx;
-  background: #ffffff;
-  color: #dc2626;
-  border: 1rpx solid #fecaca;
-  font-size: 28rpx;
-  font-weight: 600;
-}
-
-.logout-btn::after {
-  border: none;
+  background: #f8f2f4;
+  color: #6b5f70;
+  font-size: 25rpx;
 }

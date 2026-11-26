@@ -1,6 +1,26 @@
 <view class="container safe-bottom">
-  <view class="card add-box">
-    <view class="card-title">⭐ 存入我的高情商金句</view>
+  <!-- 顶部分类筛选 + 快捷记一句入口 -->
+  <view class="top-bar">
+    <scroll-view class="cat-scroll" scroll-x="true" enable-flex="true">
+      <view class="cat-row">
+        <view
+          wx:for="{{categories}}"
+          wx:key="key"
+          class="cat-pill {{activeCategory === item.key ? 'cat-pill-active' : ''}}"
+          data-key="{{item.key}}"
+          bindtap="onSelectCategory"
+        >
+          {{item.label}}
+        </view>
+      </view>
+    </scroll-view>
+    <view class="toggle-add-btn" bindtap="onToggleAddForm">
+      {{showAddForm ? '收起' : '＋ 记一句'}}
+    </view>
+  </view>
+
+  <!-- 折叠式手动录入框 -->
+  <view wx:if="{{showAddForm}}" class="card add-box">
     <textarea
       class="fav-textarea"
       placeholder="把随时想到的好话术、破冰句或哄人模板存下来..."
@@ -21,23 +41,9 @@
     </view>
   </view>
 
-  <scroll-view class="cat-scroll" scroll-x="true" enable-flex="true">
-    <view class="cat-row">
-      <view
-        wx:for="{{categories}}"
-        wx:key="key"
-        class="cat-pill {{activeCategory === item.key ? 'cat-pill-active' : ''}}"
-        data-key="{{item.key}}"
-        bindtap="onSelectCategory"
-      >
-        {{item.label}}
-      </view>
-    </view>
-  </scroll-view>
-
-  <view wx:if="{{loading}}" class="empty-box">正在加载话术收藏夹...</view>
+  <view wx:if="{{loading}}" class="empty-box">正在加载话术库...</view>
   <view wx:elif="{{items.length === 0}}" class="empty-box">
-    暂无收藏话术，可在「帮我回消息」「先别发」「AI 咨询」中轻触 ⭐ 收藏
+    暂无收藏话术，可在「帮我回消息」「先别发」「AI 咨询」中轻触 ⭐ 收藏，或点右上角「＋ 记一句」
   </view>
 
   <view wx:else class="fav-list">

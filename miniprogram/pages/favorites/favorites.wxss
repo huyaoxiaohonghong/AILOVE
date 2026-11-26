@@ -1,28 +1,74 @@
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  margin-bottom: 20rpx;
+}
+
+.cat-scroll {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.cat-row {
+  display: inline-flex;
+  gap: 10rpx;
+}
+
+.cat-pill {
+  padding: 10rpx 20rpx;
+  border-radius: 999rpx;
+  background: #ffffff;
+  color: #66596a;
+  font-size: 23rpx;
+  border: 1rpx solid #eee2e7;
+}
+
+.cat-pill-active {
+  background: #c83553;
+  color: #ffffff;
+  border-color: #c83553;
+  font-weight: 600;
+}
+
+.toggle-add-btn {
+  padding: 10rpx 20rpx;
+  border-radius: 999rpx;
+  background: #fff1f4;
+  color: #c83553;
+  border: 1rpx solid #f3bcc9;
+  font-size: 23rpx;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
 .add-box {
   margin-bottom: 20rpx;
 }
 
 .fav-textarea {
   width: 100%;
-  min-height: 120rpx;
-  padding: 18rpx;
+  min-height: 112rpx;
+  padding: 16rpx 18rpx;
   box-sizing: border-box;
   border-radius: 16rpx;
   background: #faf5f7;
   border: 1rpx solid #efe2e7;
   font-size: 26rpx;
   color: #1d1720;
-  margin-bottom: 16rpx;
+  margin-bottom: 14rpx;
 }
 
 .fav-add-foot {
   display: flex;
   align-items: center;
-  gap: 14rpx;
+  gap: 12rpx;
 }
 
 .note-input {
   flex: 1;
+  min-width: 0;
   height: 70rpx;
   padding: 0 20rpx;
   border-radius: 14rpx;
@@ -32,39 +78,11 @@
 }
 
 .add-btn {
-  width: 140rpx;
+  width: 132rpx !important;
+  flex-shrink: 0;
   height: 70rpx;
-  line-height: 70rpx;
-  font-size: 26rpx;
-  margin: 0;
+  font-size: 25rpx;
   padding: 0;
-}
-
-.cat-scroll {
-  width: 100%;
-  white-space: nowrap;
-  margin-bottom: 20rpx;
-}
-
-.cat-row {
-  display: inline-flex;
-  gap: 12rpx;
-}
-
-.cat-pill {
-  padding: 10rpx 22rpx;
-  border-radius: 999rpx;
-  background: #ffffff;
-  color: #66596a;
-  font-size: 24rpx;
-  border: 1rpx solid #eee2e7;
-}
-
-.cat-pill-active {
-  background: #c83553;
-  color: #ffffff;
-  border-color: #c83553;
-  font-weight: 600;
 }
 
 .empty-box {
@@ -76,14 +94,14 @@
 }
 
 .fav-card {
-  margin-bottom: 18rpx;
+  margin-bottom: 16rpx;
 }
 
 .fav-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12rpx;
+  margin-bottom: 10rpx;
 }
 
 .fav-tag {

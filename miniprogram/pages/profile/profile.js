@@ -6,11 +6,8 @@ Page({
   data: {
     userInfo: null,
     avatarInitial: '爱',
-    maskedOpenid: '',
     loggingIn: false,
-    quota: null,
-    reqPercent: 0,
-    tokPercent: 0,
+    quotaSummary: '',
     loveProfile: null,
     conversationCount: 0,
     envKey: 'cloud',
@@ -22,12 +19,25 @@ Page({
     inviteLocked: false,
     inviteInput: '',
     verifyingInvite: false,
+    devPanelVisible: false,
   },
+
+  _footerTapCount: 0,
+  _footerTapTimer: null,
+
+  noop() {},
 
   onShow() {
     this.syncEnvState()
     this.syncLocalUser()
     this.refreshDashboard()
+  },
+
+  onUnload() {
+    if (this._footerTapTimer) {
+      clearTimeout(this._footerTapTimer)
+      this._footerTapTimer = null
+    }
   },
 
   onInviteInput(e) {
@@ -74,21 +84,14 @@ Page({
     const userInfo = auth.getCachedUser()
     const avatarInitial =
       userInfo && userInfo.nickname ? userInfo.nickname.slice(0, 1) : '爱'
-    let maskedOpenid = ''
-    if (userInfo && userInfo.openid) {
-      const oid = String(userInfo.openid)
-      maskedOpenid = oid.length > 10 ? `${oid.slice(0, 6)}****${oid.slice(-4)}` : oid
-    }
     this.setData({
       userInfo,
       avatarInitial,
-      maskedOpenid,
       inviteLocked: Boolean(userInfo && userInfo.invite_required && !userInfo.invite_verified),
     })
   },
 
   async refreshDashboard() {
-    this.checkHealth()
     if (!auth.getToken()) return
     try {
       const [profile, quota, lpRes, convRes] = await Promise.all([
@@ -101,26 +104,43 @@ Page({
         auth.saveSession(auth.getToken(), profile)
         this.syncLocalUser()
       }
-      let reqPercent = 0
-      let tokPercent = 0
+      let quotaSummary = ''
       if (quota) {
-        if (quota.requests_limit > 0) {
-          reqPercent = Math.min(100, Math.round((quota.requests_used * 100) / quota.requests_limit))
-        }
-        if (quota.tokens_limit > 0) {
-          tokPercent = Math.min(100, Math.round((quota.tokens_used * 100) / quota.tokens_limit))
+        if (quota.is_exempt) {
+          quotaSummary = `今日已陪伴咨询 ${quota.requests_used} 次`
+        } else if (quota.requests_limit > 0) {
+          quotaSummary = `今日剩余 ${quota.requests_remaining}/${quota.requests_limit} 次咨询`
         }
       }
       this.setData({
-        quota,
-        reqPercent,
-        tokPercent,
+        quotaSummary,
         loveProfile: lpRes && lpRes.profile ? lpRes.profile : null,
         conversationCount: convRes && convRes.items ? convRes.items.length : 0,
       })
     } catch (_e) {
       // 忽略
     }
+  },
+
+  onTapVersionFooter() {
+    this._footerTapCount += 1
+    if (this._footerTapTimer) clearTimeout(this._footerTapTimer)
+    if (this._footerTapCount >= 5) {
+      this._footerTapCount = 0
+      this._footerTapTimer = null
+      this.syncEnvState()
+      this.setData({ devPanelVisible: true })
+      this.checkHealth()
+      return
+    }
+    this._footerTapTimer = setTimeout(() => {
+      this._footerTapCount = 0
+      this._footerTapTimer = null
+    }, 2500)
+  },
+
+  onCloseDevPanel() {
+    this.setData({ devPanelVisible: false })
   },
 
   async checkHealth() {
@@ -194,14 +214,6 @@ Page({
     wx.navigateTo({ url: '/pages/love-profile/love-profile' })
   },
 
-  goReplyHelper() {
-    wx.navigateTo({ url: '/pages/reply-helper/reply-helper' })
-  },
-
-  goSoftenDraft() {
-    wx.navigateTo({ url: '/pages/soften-draft/soften-draft' })
-  },
-
   goFavorites() {
     wx.navigateTo({ url: '/pages/favorites/favorites' })
   },
@@ -210,6 +222,19 @@ Page({
     const app = getApp()
     app.setChatIntent({ openHistory: true })
     wx.switchTab({ url: '/pages/chat/chat' })
+  },
+
+  onOpenPrivacySheet() {
+    wx.showActionSheet({
+      itemList: ['导出私密情感手账 (.md)', '彻底清空个人云端数据'],
+      success: (res) => {
+        if (res.tapIndex === 0) {
+          this.handleExportJournal()
+        } else if (res.tapIndex === 1) {
+          this.handlePurgeAllData()
+        }
+      },
+    })
   },
 
   async handleExportJournal() {
@@ -270,7 +295,7 @@ Page({
         auth.logout()
         this.syncEnvState()
         this.syncLocalUser()
-        this.setData({ quota: null, loveProfile: null, conversationCount: 0 })
+        this.setData({ quotaSummary: '', loveProfile: null, conversationCount: 0 })
         this.checkHealth()
         wx.showToast({ title: `已切换至${nextCfg.LABEL}`, icon: 'none' })
       },
@@ -286,7 +311,7 @@ Page({
         if (!res.confirm) return
         auth.logout()
         this.syncLocalUser()
-        this.setData({ quota: null, loveProfile: null, conversationCount: 0 })
+        this.setData({ quotaSummary: '', loveProfile: null, conversationCount: 0 })
         wx.showToast({ title: '已退出登录', icon: 'none' })
       },
     })
